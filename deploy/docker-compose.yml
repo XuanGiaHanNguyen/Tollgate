@@ -1,4 +1,4 @@
-# M1 topology: 1 gateway + 3 mock backends.
+# M2 topology: 1 gateway + 3 mock backends, Prometheus and Grafana.
 # Later milestones add control plane, more gateways, mockllm and observability.
 name: tollgate
 
@@ -12,7 +12,7 @@ services:
   gateway:
     build: {context: .., args: {BIN: tollgate-gw}}
     image: tollgate/tollgate-gw:dev
-    command: ["-config", "/etc/tollgate/gateway.yaml"]
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-node", "gw-1"]
     volumes: ["./gateway.yaml:/etc/tollgate/gateway.yaml:ro"]
     ports: ["8080:8080", "9090:9090"]
     depends_on: [backend-1, backend-2, backend-3]
@@ -26,3 +26,21 @@ services:
   backend-3:
     <<: *backend
     command: ["-addr", ":9000", "-name", "backend-3"]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9091:9090"]
+    depends_on: [gateway]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
