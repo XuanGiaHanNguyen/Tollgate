@@ -62,3 +62,22 @@ Not benchmark results for `METRICS.md` (those come from `bench/` in M2), just ch
 - Micro-benchmarks (`go test -bench`, parallel): breaker Allow+Record 51 ns/op, balancer pick 38–52 ns/op, all 0 allocs. Full `ServeHTTP` through a loopback backend: ~14.7 µs/op, 114 allocs/op — mostly `net/http` client/server; to be profiled in M2.
 - Kill-backend (local processes, `make chaos-kill-backend-local`, 1 s probe interval, 3 runs): gateway marked the killed backend down 67–69 ms after the kill (passive ejection fires before the next active probe); 0 client-visible errors because retries rerouted.
 - docker-compose: **not verified** — Docker is not installed on the dev machine.
+
+## M2: Metrics and first numbers — plan
+
+### Live metrics (`internal/metrics`)
+- One `prometheus.Registry` per process (not the global default), exposed on the admin listener at `/metrics`, plus Go runtime and process collectors.
+- M2 registers the metrics that M1 code can produce: `tollgate_requests_total{route,status,node}`, `tollgate_request_duration_seconds{route,node}`, `tollgate_gateway_overhead_seconds{node}`, `tollgate_breaker_state{backend}`, `tollgate_backend_healthy{backend}`, `tollgate_retries_total{route}`, `tollgate_config_version{node}`. The rest of the spec's table is added by the milestone that creates the behavior, so no metric is exported that is always zero.
+- **Hot path:** `*Vec.WithLabelValues` hashes labels and takes a read lock on every call. Handles are resolved once per route at build time (duration, retries) and per (route, status) through a per-route `sync.Map` that is read-mostly after warm-up. No lock is taken per request after the first request with a given status.
+- **Gateway overhead** = wall time in `ServeHTTP` − time spent inside upstream `RoundTrip` calls (connect + send + wait for headers, summed over attempts). Retry backoff counts as overhead because the gateway chose to wait. Body streaming after headers is excluded because it is paced by the backend. Considered: taking overhead only from k6 (gateway vs direct): kept too, as a cross-check, because it includes the extra network hop.
+- Status capture uses a `ResponseWriter` wrapper with `Unwrap()`, so `http.ResponseController` (used by ReverseProxy to flush SSE in M5) still reaches the real writer.
+
+### Benchmarks
+- `bench/k6/` holds the scripts; `bench/run` (Go) orchestrates a run: starts processes (laptop mode) or targets compose, drives k6, injects failures, samples gateway CPU/RSS, and writes `bench/results/<exp>-<date>.json` with the environment (git commit, machine, CPU, Go and k6 versions, node count, duration) and the raw k6 summaries.
+- `bench/report.go` regenerates `docs/METRICS.md` from the newest result per experiment, laptop and AWS in separate sections.
+- **E1:** k6 `constant-arrival-rate` on a rising RPS ladder for three targets: direct to backend, 1 gateway, 3 gateways (k6 spreads requests across the gateway URLs, standing in for the ALB). A level passes if p99 < limit and errors < 0.1% and k6 kept up with the arrival rate (dropped iterations < 1%); the ladder stops at the first failing level. 3 repetitions per level; the median run is reported.
+- **E7:** 3 backends, one switched to 50% errors mid-run and back. Breaker on vs off, otherwise identical config (passive ejection off in both, so the breaker is the only thing reacting). Records p99 and error rate per phase and the times failure→open and recovery→closed, from polling `/admin/upstreams` every 10 ms.
+- Laptop caveat: k6, gateways and backends share the same 8 cores, so absolute RPS is a floor set by the laptop, not the gateway alone. The result files record this.
+
+### CI
+GitHub Actions: gofmt check, `go vet`, `staticcheck`, `go test -race` with coverage report, build all binaries, `docker build` for each image.
