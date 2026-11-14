@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -226,3 +227,38 @@ func (b *bufferPool) Get() []byte {
 }
 
 func (b *bufferPool) Put(buf []byte) { b.p.Put(&buf) }
+
+// TargetStatus is the admin view of one target.
+type TargetStatus struct {
+	URL      string `json:"url"`
+	Healthy  bool   `json:"healthy"`
+	Ejected  bool   `json:"ejected"`
+	Breaker  string `json:"breaker"`
+	Inflight int64  `json:"inflight"`
+}
+
+// UpstreamStatus is the admin view of one upstream.
+type UpstreamStatus struct {
+	Name    string         `json:"name"`
+	Targets []TargetStatus `json:"targets"`
+}
+
+// Status reports health, ejection and breaker state for every target.
+func (g *Gateway) Status() []UpstreamStatus {
+	out := make([]UpstreamStatus, 0, len(g.upstreams))
+	for _, up := range g.upstreams {
+		us := UpstreamStatus{Name: up.Name}
+		for _, t := range up.Targets {
+			br := "disabled"
+			if t.Breaker != nil {
+				br = t.Breaker.State().String()
+			}
+			us.Targets = append(us.Targets, TargetStatus{
+				URL: t.String(), Healthy: t.Healthy(), Ejected: t.Ejected(), Breaker: br, Inflight: t.Inflight(),
+			})
+		}
+		out = append(out, us)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}

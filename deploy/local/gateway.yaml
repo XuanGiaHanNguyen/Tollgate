@@ -1,0 +1,26 @@
+# Gateway config for local processes (bench/chaos/kill-backend.sh).
+listen: "127.0.0.1:18080"
+admin_listen: "127.0.0.1:19090"
+shutdown_timeout: 15s
+retry_budget: {ratio: 0.2, initial: 10}
+upstreams:
+  - name: api
+    balancer: round_robin
+    targets:
+      - url: http://127.0.0.1:9101
+      - url: http://127.0.0.1:9102
+      - url: http://127.0.0.1:9103
+    health_check:
+      path: /healthz
+      interval: 1s
+      timeout: 500ms
+      unhealthy_threshold: 1
+      healthy_threshold: 2
+    passive: {consecutive_failures: 5, eject_duration: 10s}
+    breaker: {window: 10s, min_requests: 20, error_rate: 0.5, cooldown: 5s, half_open_probes: 3}
+routes:
+  - name: api
+    prefix: /
+    upstream: api
+    timeouts: {connect: 1s, header: 5s, total: 10s}
+    retry: {attempts: 2, base_backoff: 5ms, max_backoff: 50ms}
