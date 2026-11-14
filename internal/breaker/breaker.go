@@ -186,6 +186,14 @@ func (b *Breaker) Record(success bool) {
 	}
 }
 
+// Ignore ends an admitted request without counting it either way, e.g. when
+// the client went away. It frees a half-open probe slot.
+func (b *Breaker) Ignore() {
+	if State(b.state.Load()) == HalfOpen {
+		b.probes.Add(-1)
+	}
+}
+
 func (b *Breaker) bucketFor(now int64) *bucket {
 	epoch := now / b.bucketDur
 	bk := &b.buckets[epoch%int64(len(b.buckets))]
