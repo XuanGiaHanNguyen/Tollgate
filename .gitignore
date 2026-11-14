@@ -1,0 +1,8 @@
+/bin/
+*.test
+*.out
+coverage.*
+.DS_Store
+/deploy/terraform/.terraform/
+*.tfstate*
+.env
