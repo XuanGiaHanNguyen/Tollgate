@@ -11,6 +11,7 @@ import (
 
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/lb"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 )
 
 // Errors surfaced to the proxy's error handler.
@@ -22,11 +23,6 @@ var (
 // maxReplayBody is the largest request body buffered so it can be retried.
 const maxReplayBody = 1 << 20
 
-// Observer receives per-attempt events (metrics hook; may be nil).
-type Observer interface {
-	Retry(route string)
-}
-
 // retryTransport picks a target per attempt, applies breaker and passive
 // health accounting, and retries idempotent requests within the budget.
 type retryTransport struct {
@@ -35,7 +31,7 @@ type retryTransport struct {
 	upstream *Upstream
 	retry    config.Retry
 	budget   *RetryBudget
-	observer Observer
+	metrics  *metrics.RouteMetrics // nil when metrics are off
 }
 
 func idempotent(method string) bool {
@@ -52,6 +48,7 @@ func retryableStatus(code int) bool {
 
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
+	stats := statsFrom(req)
 	canRetry := t.retry.Attempts > 1 && idempotent(req.Method)
 
 	var body []byte
@@ -93,7 +90,14 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		target.Acquire()
+		var rtStart time.Time
+		if stats != nil {
+			rtStart = time.Now()
+		}
 		resp, err := t.base.RoundTrip(out)
+		if stats != nil {
+			stats.upstream += time.Since(rtStart)
+		}
 		clientGone := ctx.Err() != nil
 		success := err == nil && resp.StatusCode < 500
 		if clientGone && err != nil {
@@ -114,7 +118,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				target.Release()
 				return nil, err
 			}
-			resp.Body = &releaseBody{ReadCloser: resp.Body, target: target}
+			resp.Body = &releaseBody{ReadCloser: resp.Body, target: target, stats: stats}
 			return resp, nil
 		}
 
@@ -124,8 +128,8 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		target.Release()
 		tried = append(tried, target)
-		if t.observer != nil {
-			t.observer.Retry(t.route)
+		if t.metrics != nil {
+			t.metrics.Retry()
 		}
 		if err := sleepCtx(ctx, backoff(attempt, t.retry.BaseBackoff, t.retry.MaxBackoff)); err != nil {
 			return nil, err
@@ -202,7 +206,19 @@ type readCloser struct {
 type releaseBody struct {
 	io.ReadCloser
 	target *lb.Target
+	stats  *reqStats // nil when metrics are off
 	done   bool
+}
+
+// Read counts time blocked on the upstream as upstream time, not overhead.
+func (b *releaseBody) Read(p []byte) (int, error) {
+	if b.stats == nil {
+		return b.ReadCloser.Read(p)
+	}
+	start := time.Now()
+	n, err := b.ReadCloser.Read(p)
+	b.stats.streaming += time.Since(start)
+	return n, err
 }
 
 func (b *releaseBody) Close() error {

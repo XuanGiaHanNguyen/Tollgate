@@ -1,6 +1,6 @@
 # Multi-stage build for any binary under cmd/. Usage:
 #   docker build --build-arg BIN=tollgate-gw -t tollgate-gw .
-FROM golang:1.25 AS build
+FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

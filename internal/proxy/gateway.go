@@ -19,6 +19,7 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/breaker"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/lb"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 )
 
 // Upstream is a named pool of targets with its balancer and health checker.
@@ -38,6 +39,7 @@ type Route struct {
 	cfg      config.Route
 	upstream *Upstream
 	proxy    *httputil.ReverseProxy
+	metrics  *metrics.RouteMetrics // nil when metrics are off
 }
 
 // Gateway serves proxied traffic. The router is held in an atomic pointer so
@@ -46,12 +48,13 @@ type Gateway struct {
 	router    atomic.Pointer[Router]
 	upstreams map[string]*Upstream
 	log       *slog.Logger
+	metrics   *metrics.Gateway
 }
 
 // Options are optional hooks for New.
 type Options struct {
-	Logger   *slog.Logger
-	Observer Observer
+	Logger  *slog.Logger
+	Metrics *metrics.Gateway // optional
 	// OnBreakerChange and OnHealthChange are metrics/log hooks.
 	OnBreakerChange func(target string, from, to breaker.State)
 	OnHealthChange  func(target string, healthy bool)
@@ -63,7 +66,23 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &Gateway{upstreams: map[string]*Upstream{}, log: log}
+	g := &Gateway{upstreams: map[string]*Upstream{}, log: log, metrics: opts.Metrics}
+	if m := opts.Metrics; m != nil {
+		// Metrics hooks run alongside any caller-supplied hooks.
+		userBreaker, userHealth := opts.OnBreakerChange, opts.OnHealthChange
+		opts.OnBreakerChange = func(target string, from, to breaker.State) {
+			m.SetBreakerState(target, int(to))
+			if userBreaker != nil {
+				userBreaker(target, from, to)
+			}
+		}
+		opts.OnHealthChange = func(target string, healthy bool) {
+			m.SetBackendHealthy(target, healthy)
+			if userHealth != nil {
+				userHealth(target, healthy)
+			}
+		}
+	}
 
 	for _, uc := range cfg.Upstreams {
 		up, err := buildUpstream(uc, opts, log)
@@ -71,6 +90,14 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 			return nil, err
 		}
 		g.upstreams[uc.Name] = up
+		if opts.Metrics != nil {
+			for _, t := range up.Targets {
+				opts.Metrics.SetBackendHealthy(t.String(), true)
+				if t.Breaker != nil {
+					opts.Metrics.SetBreakerState(t.String(), int(breaker.Closed))
+				}
+			}
+		}
 	}
 
 	budget := NewRetryBudget(cfg.RetryBudget.Ratio, cfg.RetryBudget.Initial)
@@ -82,13 +109,16 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 			Name: rc.Name, prefix: rc.Prefix, host: rc.Host, methods: rc.Methods,
 			cfg: rc, upstream: up,
 		}
+		if opts.Metrics != nil {
+			rt.metrics = opts.Metrics.Route(rc.Name)
+		}
 		transport := &retryTransport{
 			route:    rc.Name,
 			base:     newHTTPTransport(cfg.Transport, rc.Timeouts),
 			upstream: up,
 			retry:    rc.Retry,
 			budget:   budget,
-			observer: opts.Observer,
+			metrics:  rt.metrics,
 		}
 		rt.proxy = &httputil.ReverseProxy{
 			Rewrite: func(pr *httputil.ProxyRequest) {
@@ -193,9 +223,31 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no route", http.StatusNotFound)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), route.cfg.Timeouts.Total)
-	defer cancel()
-	route.proxy.ServeHTTP(w, r.WithContext(ctx))
+	if route.metrics == nil {
+		ctx, cancel := context.WithTimeout(r.Context(), route.cfg.Timeouts.Total)
+		defer cancel()
+		route.proxy.ServeHTTP(w, r.WithContext(ctx))
+		return
+	}
+
+	start := time.Now()
+	st := statsPool.Get().(*reqStats)
+	*st = reqStats{}
+	sw := &statusWriter{ResponseWriter: w}
+	ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), statsKey{}, st), route.cfg.Timeouts.Total)
+	route.proxy.ServeHTTP(sw, r.WithContext(ctx))
+	cancel()
+
+	total := time.Since(start)
+	status := sw.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	route.metrics.ObserveRequest(status, total.Seconds())
+	if overhead := total - st.upstream - st.streaming; overhead >= 0 {
+		g.metrics.ObserveOverhead(overhead.Seconds())
+	}
+	statsPool.Put(st)
 }
 
 func (g *Gateway) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
