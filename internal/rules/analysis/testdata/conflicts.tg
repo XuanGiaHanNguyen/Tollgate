@@ -1,0 +1,25 @@
+let unused = 1
+
+route "/api/*" {
+  require auth
+  limit 100 per minute by user.id
+}
+
+route "/api/ai/*" {
+  limit 10 per minute by user.id
+}
+
+route "/api/*" {
+  deny 403
+}
+
+route "/public" {
+  limit 5 per second by client.ip
+}
+
+route "/public/*" {
+  limit 5 per second by client.ip
+}
+
+route "bad" { deny 403 }
+route "/x/*/y" { deny 403 }

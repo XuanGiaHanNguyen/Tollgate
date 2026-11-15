@@ -1,0 +1,6 @@
+1:1: warning: analysis: let "unused" is never used
+8:1: warning: analysis: route "/api/ai/*" overlaps "/api/*" (at 3:1), which requires auth, but does not require auth itself; requests under "/api/ai/*" skip authentication
+9:3: warning: analysis: conflicting limits: route "/api/ai/*" allows 10 per minute by user.id, but the overlapping route "/api/*" (at 3:1) allows 100; for paths under "/api/ai/*" only 10 applies
+12:1: error: analysis: route "/api/*" duplicates the route at 3:1
+24:1: error: analysis: route pattern "bad" must start with /
+25:1: error: analysis: route pattern "/x/*/y": '*' is only allowed as the final segment ("/x/*")

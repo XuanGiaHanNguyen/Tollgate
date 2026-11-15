@@ -1,0 +1,4 @@
+6:3: warning: analysis: shadowed rule: this when can never take effect because the when at 5:3 already denies every request it matches
+7:3: warning: analysis: shadowed rule: this when can never take effect because the when at 5:3 already denies every request it matches
+13:3: warning: analysis: unreachable: follows the unconditional deny at 12:3
+19:5: warning: analysis: shadowed rule: this when can never take effect because the when at 18:5 already denies every request it matches

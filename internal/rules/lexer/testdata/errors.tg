@@ -1,0 +1,6 @@
+let x = 1 @ 2
+let y = 99999999999999999999
+let z = 10abc
+let s = "bad \q escape"
+let a = b & c | d
+let u = "unterminated
