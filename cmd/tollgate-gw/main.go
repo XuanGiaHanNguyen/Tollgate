@@ -161,6 +161,10 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 	})
 
 	admin.Handle("GET /metrics", m.Handler())
+	admin.HandleFunc("GET /admin/budgets", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gw.BudgetStats())
+	})
 	admin.HandleFunc("GET /admin/rules", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"version": gw.RulesVersion(), "file": cfg.Rules.File, "engine": cfg.Rules.Engine})

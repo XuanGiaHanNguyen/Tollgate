@@ -47,7 +47,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e3|e4|e7|e10")
+		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e3|e4|e7|e8|e9|e10")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -90,6 +90,10 @@ func main() {
 		res, err = runE4()
 	case "e7":
 		res, err = runE7()
+	case "e8":
+		res, err = runE8()
+	case "e9":
+		res, err = runE9()
 	case "e10":
 		res, err = runE10()
 	default:
@@ -113,7 +117,7 @@ func main() {
 }
 
 func build() error {
-	for _, b := range []string{"tollgate-gw", "mockbackend"} {
+	for _, b := range []string{"tollgate-gw", "mockbackend", "mockllm"} {
 		cmd := exec.Command("go", "build", "-o", "bin/"+b, "./cmd/"+b)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -143,6 +147,7 @@ type cluster struct {
 	gateways []string // proxy base URLs
 	admins   []string // gateway admin base URLs
 	gwProcs  []*exec.Cmd
+	llmURLs  []string // mockllm base URLs, provider-a first
 }
 
 type clusterSpec struct {
@@ -156,6 +161,13 @@ type clusterSpec struct {
 	cluster       bool   // gateways share limits over gRPC
 	batchMax      int
 	batchFlush    time.Duration
+	llms          []llmSpec // mock LLM providers, as upstreams provider-a, provider-b, ...
+	aiYAML        string    // top-level ai: block
+}
+
+// llmSpec is one mockllm process; it becomes upstream "provider-<letter>".
+type llmSpec struct {
+	args []string
 }
 
 func startCluster(spec clusterSpec) (*cluster, error) {
@@ -174,6 +186,21 @@ func startCluster(spec clusterSpec) (*cluster, error) {
 			c.stop()
 			return nil, err
 		}
+	}
+	var llmUps, aiRoute string
+	for i, l := range spec.llms {
+		addr := fmt.Sprintf("127.0.0.1:%d", 9201+i)
+		name := fmt.Sprintf("provider-%c", 'a'+i)
+		c.llmURLs = append(c.llmURLs, "http://"+addr)
+		args := append([]string{"-addr", addr, "-name", name}, l.args...)
+		if err := c.spawn("bin/mockllm", args...); err != nil {
+			c.stop()
+			return nil, err
+		}
+		llmUps += fmt.Sprintf("  - {name: %s, targets: [{url: \"http://%s\"}], breaker: {disabled: true}}\n", name, addr)
+	}
+	if len(spec.llms) > 0 {
+		aiRoute = "  - {name: ai, type: ai, prefix: /v1/, upstream: provider-a, timeouts: {connect: 1s, header: 30s, total: 120s}}\n"
 	}
 	for i := 1; i <= spec.gateways; i++ {
 		listen := fmt.Sprintf("127.0.0.1:%d", 18080+i)
@@ -201,13 +228,13 @@ upstreams:
     balancer: round_robin
     targets:
 %s    health_check: {path: /healthz, interval: 1s, timeout: 500ms, unhealthy_threshold: 1, healthy_threshold: 2}
-%sroutes:
-  - name: api
+%s%sroutes:
+%s  - name: api
     prefix: /
     upstream: api
     timeouts: {connect: 1s, header: 5s, total: 10s}
     retry: {attempts: 2, base_backoff: 5ms, max_backoff: 50ms}
-%s`, listen, admin, targets.String(), spec.upstreamExtra, extra)
+%s%s`, listen, admin, targets.String(), spec.upstreamExtra, llmUps, aiRoute, extra, spec.aiYAML)
 		path := filepath.Join(dir, fmt.Sprintf("gw-%d.yaml", i))
 		if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
 			c.stop()
@@ -221,7 +248,7 @@ upstreams:
 		}
 		c.gwProcs = append(c.gwProcs, c.procs[len(c.procs)-1])
 	}
-	for _, u := range c.backends {
+	for _, u := range append(append([]string(nil), c.backends...), c.llmURLs...) {
 		if err := waitOK(u + "/healthz"); err != nil {
 			c.stop()
 			return nil, err

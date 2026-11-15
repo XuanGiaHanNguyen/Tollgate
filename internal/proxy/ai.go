@@ -19,6 +19,7 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/lb"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/cost"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/env"
 )
@@ -77,6 +78,9 @@ func (a *aiState) hedgeBudget(route string, pct float64) *hedge.Budget {
 	b, _ := a.budgets.LoadOrStore(key, hedge.NewBudget(pct/100, 1))
 	return b.(*hedge.Budget)
 }
+
+// BudgetStats reports the budget holds this node owns (leak checks).
+func (g *Gateway) BudgetStats() cost.Stats { return g.policy.limiter.Budgets().Stats() }
 
 // CheckRules reports rule references the gateway cannot serve: unknown
 // providers (upstreams) or pattern sets. Callers reject such a reload.

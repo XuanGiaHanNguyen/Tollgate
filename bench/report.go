@@ -81,6 +81,10 @@ func main() {
 				writeE4(&b, r)
 			case "E7":
 				writeE7(&b, r)
+			case "E8":
+				writeE8(&b, r)
+			case "E9":
+				writeE9(&b, r)
 			case "E10":
 				writeE10(&b, r)
 			default:
@@ -509,4 +513,114 @@ func writeE10(b *strings.Builder, r *benchfmt.Result) {
 			z.Patterns, m.MBPerSec, m.ChunkP50Ns/1000, m.ChunkP99Ns/1000, z.HoldbackRunes, z.HoldbackAt50, found, planted, sf, sp, z.RecallPct)
 	}
 	b.WriteString("\nPlanted and split counts are summed over all runs. Throughput is measured in a separate pass without per-chunk timers.\n\n")
+}
+
+// ---- E8 ----
+
+type e8Summary struct {
+	Modes []struct {
+		Name  string `json:"name"`
+		Rules string `json:"rules"`
+		Runs  []struct {
+			Accepted     int     `json:"accepted"`
+			Rejected     int     `json:"rejected_429"`
+			Failed       int     `json:"failed"`
+			SpendUSD     float64 `json:"true_spend_usd"`
+			OverspendPct float64 `json:"overspend_pct"`
+			EstErrMean   float64 `json:"estimate_error_mean"`
+			Expired      float64 `json:"reservations_expired"`
+			LeakedHolds  int64   `json:"leaked_holds_after_ttl"`
+			Degraded     float64 `json:"degraded_limit_decisions"`
+		} `json:"runs"`
+		Median int `json:"median_run"`
+	} `json:"modes"`
+}
+
+var e8Labels = map[string]string{"request_count_limit": "Request-count limit", "cost_budget": "Cost budget (reserve-and-settle)",
+	"cost_budget_kill_gateway": "Cost budget, streaming gateway killed"}
+
+func writeE8(b *strings.Builder, r *benchfmt.Result) {
+	var s e8Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: one user, $%v/day budget; %v requests at %v req/s; mix: %v. Provider: %v. Pricing %v. Request-count limit: %v. Reservation TTL %v; %v. Leak check: %v. %v.\n\n",
+		r.Params["budget_usd"], r.Params["requests"], r.Params["rate"], r.Params["mix"], r.Params["provider"], r.Params["pricing"],
+		r.Params["count_limit"], r.Params["reservation_ttl"], r.Params["kill"], r.Params["leak_check"], r.Params["duration_note"])
+	b.WriteString("| Method | Accepted | Rejected (429) | Failed | True spend | Overspend vs budget | Estimate error (mean) | Holds expired | **Leaked holds** |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, m := range s.Modes {
+		run := m.Runs[m.Median]
+		est := "—"
+		if run.EstErrMean != 0 {
+			est = fmt.Sprintf("%+.0f%%", run.EstErrMean*100)
+		}
+		fmt.Fprintf(b, "| %s | %d | %d | %d | $%.2f | %+.2f%% | %s | %.0f | %d |\n",
+			e8Labels[m.Name], run.Accepted, run.Rejected, run.Failed, run.SpendUSD, run.OverspendPct, est, run.Expired, run.LeakedHolds)
+	}
+	b.WriteString("\nAll runs (overspend %; leaked holds; degraded limit decisions):\n\n")
+	for _, m := range s.Modes {
+		var vals []string
+		for _, run := range m.Runs {
+			vals = append(vals, fmt.Sprintf("%+.2f%% / %d leaked / %.0f degraded", run.OverspendPct, run.LeakedHolds, run.Degraded))
+		}
+		fmt.Fprintf(b, "- %s: %s\n", e8Labels[m.Name], strings.Join(vals, "; "))
+	}
+	b.WriteString("\nEstimate error is (estimate − actual) / actual: positive means the hold was larger than the real cost (estimates reserve the full max_tokens). Failed requests in the kill run are the ones sent to the dead gateway.\n\n")
+}
+
+// ---- E9 ----
+
+type e9Summary struct {
+	Modes []struct {
+		Name   string  `json:"name"`
+		MaxPct float64 `json:"hedge_max_pct"`
+		Runs   []struct {
+			OK           int     `json:"ok"`
+			Requests     int     `json:"requests"`
+			TTFTP50Ms    float64 `json:"ttft_p50_ms"`
+			TTFTP95Ms    float64 `json:"ttft_p95_ms"`
+			TTFTP99Ms    float64 `json:"ttft_p99_ms"`
+			CostPerReqUS float64 `json:"cost_per_request_micro_usd"`
+			Hedges       float64 `json:"hedges"`
+			HedgesWon    float64 `json:"hedges_won"`
+			HedgeRatePct float64 `json:"hedge_rate_pct"`
+		} `json:"runs"`
+		Median   int     `json:"median_run"`
+		ExtraPct float64 `json:"extra_cost_pct_vs_off"`
+		P99Cut   float64 `json:"ttft_p99_change_pct_vs_off"`
+	} `json:"modes"`
+}
+
+func writeE9(b *strings.Builder, r *benchfmt.Result) {
+	var s e9Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: %v req/s; providers: %v; request: %v; hedge %v. Cost: %v. TTFT %v.\n\n",
+		r.Params["rate"], r.Params["providers"], r.Params["request"], r.Params["hedge"], r.Params["cost"], r.Params["ttft"])
+	b.WriteString("| Hedging | TTFT p50 (ms) | TTFT p95 (ms) | TTFT p99 (ms) | p99 change vs off | Hedge rate | Hedges won | Cost / request | Extra cost vs off |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, m := range s.Modes {
+		run := m.Runs[m.Median]
+		name := "off"
+		if m.MaxPct > 0 {
+			name = fmt.Sprintf("after p95, max %g%%", m.MaxPct)
+		}
+		won := "—"
+		if run.Hedges > 0 {
+			won = fmt.Sprintf("%.0f / %.0f (%.0f%%)", run.HedgesWon, run.Hedges, 100*run.HedgesWon/run.Hedges)
+		}
+		fmt.Fprintf(b, "| %s | %.1f | %.1f | %.1f | %+.1f%% | %.2f%% | %s | $%.5f | %+.2f%% |\n",
+			name, run.TTFTP50Ms, run.TTFTP95Ms, run.TTFTP99Ms, m.P99Cut, run.HedgeRatePct, won, run.CostPerReqUS/1e6, m.ExtraPct)
+	}
+	b.WriteString("\nAll runs (TTFT p99 ms):\n\n")
+	for _, m := range s.Modes {
+		var vals []string
+		for _, run := range m.Runs {
+			vals = append(vals, fmt.Sprintf("%.0f", run.TTFTP99Ms))
+		}
+		fmt.Fprintf(b, "- %s: %s\n", m.Name, strings.Join(vals, ", "))
+	}
+	b.WriteString("\nMedian run per mode by p99. Extra cost compares true provider billing per successful request with the hedging-off median run.\n\n")
 }
