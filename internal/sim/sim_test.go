@@ -10,10 +10,15 @@ var firstSeed = flag.Int("seed", 1, "first seed (replay one failure with -seed N
 
 // TestSeeds runs the whole cluster under faults for many seeds. A failure
 // prints its seed; rerun with -seed N -seeds 1 to replay it exactly.
-func TestSeeds(t *testing.T) {
+func TestSeeds(t *testing.T) { runSeeds(t, DefaultOptions) }
+
+// TestSeedsStore runs the real control-plane config store on the cluster.
+func TestSeedsStore(t *testing.T) { runSeeds(t, StoreOptions) }
+
+func runSeeds(t *testing.T, opts func() Options) {
 	var tot Stats
 	for s := *firstSeed; s < *firstSeed+*seeds; s++ {
-		sim := New(uint64(s), DefaultOptions())
+		sim := New(uint64(s), opts())
 		if err := sim.Run(); err != nil {
 			t.Fatal(err)
 		}

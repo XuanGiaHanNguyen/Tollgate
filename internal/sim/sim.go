@@ -37,7 +37,9 @@ type Options struct {
 	ProposePct   int // per-tick chance (%) of a client proposal
 	SnapshotEach int // compact after this many applied entries
 	NewMachine   func() Machine
-	Trace        func(string) // optional event log for replaying a failure
+	// NewProposal builds the nth client proposal (default "k=v").
+	NewProposal func(r *rand.Rand, n int) []byte
+	Trace       func(string) // optional event log for replaying a failure
 }
 
 // DefaultOptions are the CI settings.
@@ -399,6 +401,9 @@ func (s *Sim) propose() {
 		if n.up && n.r.IsLeader() {
 			s.Stats.Proposals++
 			v := fmt.Sprintf("k%d=v%d", s.rnd.IntN(8), s.Stats.Proposals)
+			if s.opt.NewProposal != nil {
+				v = string(s.opt.NewProposal(s.rnd, s.Stats.Proposals))
+			}
 			if _, err := n.r.Propose([]byte(v)); err == nil {
 				s.proposed[v] = true
 				s.process(n)
@@ -420,7 +425,10 @@ func (s *Sim) converged() error {
 		return s.failf("liveness: no leader %d ticks after every fault healed", s.opt.Ticks/5)
 	}
 	// A fresh write must commit everywhere within a bounded number of ticks.
-	marker := fmt.Sprintf("final-%d", s.seed)
+	marker := fmt.Sprintf("final=%d", s.seed)
+	if s.opt.NewProposal != nil {
+		marker = string(s.opt.NewProposal(s.rnd, -1))
+	}
 	idx, err := leader.r.Propose([]byte(marker))
 	if err != nil {
 		return s.failf("liveness: leader refused proposal: %v", err)
