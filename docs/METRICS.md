@@ -201,6 +201,89 @@ Breaker config (on): `breaker: {window: 5s, min_requests: 20, error_rate: 0.3, c
 | Recovery → breaker closed | 1489 ms | 1029 ms, 1578 ms, 1489 ms |
 | Times opened while failing | 15 | |
 
+### E8: Do cost budgets hold?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-15 22:57 → 23:06 (UTC) |
+| Commit | `ceb057203c9a` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 3 gateway node(s) max |
+| Load average at start | 2.01 |
+| Power | battery |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+
+Method: one user, $100/day budget; 400 requests at 8 req/s; mix: 80% small (50-word prompt, max_tokens 100), 20% large (3000-word prompt, max_tokens 2000); seeded per rep, same across modes. Provider: 1 x mockllm, TTFT 50ms, 1000 tok/s, output uniform 0.2-1.0 x max_tokens; prompt tokens counted by words. Pricing $1/1K input, $3/1K output; true spend from the provider's per-user billing. Request-count limit: 66 per day = budget / expected cost per request ($1.508). Reservation TTL 5s; gw-1 SIGKILLed after 10% of requests were sent, while the budget still had room and large streams were in flight. Leak check: active holds on gw-3 after every reservation deadline has passed. a budget-accounting run, not a throughput run: 400 requests at 8 req/s.
+
+| Method | Accepted | Rejected (429) | Failed | True spend | Overspend vs budget | Estimate error (mean) | Holds expired | **Leaked holds** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Request-count limit | 67 | 333 | 0 | $114.80 | +14.80% | — | 0 | 0 |
+| Cost budget (reserve-and-settle) | 87 | 313 | 0 | $99.83 | -0.17% | +90% | 0 | 0 |
+| Cost budget, streaming gateway killed | 103 | 116 | 181 | $104.65 | +4.65% | +92% | 1 | 0 |
+
+All runs (overspend %; leaked holds; degraded limit decisions):
+
+- Request-count limit: +14.80% / 0 leaked / 1 degraded; +15.51% / 0 leaked / 1 degraded; -7.58% / 0 leaked / 0 degraded
+- Cost budget (reserve-and-settle): -0.17% / 0 leaked / 0 degraded; -0.07% / 0 leaked / 0 degraded; -0.31% / 0 leaked / 0 degraded
+- Cost budget, streaming gateway killed: +4.51% / 0 leaked / 0 degraded; +4.65% / 0 leaked / 0 degraded; +10.60% / 0 leaked / 0 degraded
+
+Estimate error is (estimate − actual) / actual: positive means the hold was larger than the real cost (estimates reserve the full max_tokens). Failed requests in the kill run are the ones sent to the dead gateway.
+
+### E9: Does hedging cut tail latency?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-15 23:06 → 23:20 (UTC) |
+| Commit | `ceb057203c9a` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 1 gateway node(s) max |
+| Load average at start | 2.58 |
+| Power | battery |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+
+Method: 40 req/s; providers: 2 x mockllm, TTFT log-normal median 100ms sigma 0.3, 5% of requests x10 (heavy tail), 500 tok/s; request: max_tokens 20, ~10-word prompt, streaming; hedge after the primary's p95 TTFT (rolling 256-sample window, >= 20 samples). Cost: true cost from both providers' billing at $1/1K input, $3/1K output; a cancelled hedge is billed its prompt. TTFT measured by the client to the first content event.
+
+| Hedging | TTFT p50 (ms) | TTFT p95 (ms) | TTFT p99 (ms) | p99 change vs off | Hedge rate | Hedges won | Cost / request | Extra cost vs off |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| off | 104.9 | 753.2 | 1291.1 | +0.0% | 0.00% | — | $0.07320 | +0.00% |
+| after p95, max 1% | 102.4 | 288.9 | 1205.3 | -6.6% | 1.04% | 22 / 25 (88%) | $0.07329 | +0.12% |
+| after p95, max 5% | 102.3 | 260.0 | 659.9 | -48.9% | 4.96% | 100 / 119 (84%) | $0.07376 | +0.77% |
+| after p95, max 10% | 102.5 | 258.3 | 534.6 | -58.6% | 5.54% | 116 / 133 (87%) | $0.07385 | +0.88% |
+
+All runs (TTFT p99 ms):
+
+- off: 1285, 1322, 1291
+- hedge_1pct: 1118, 1205, 1264
+- hedge_5pct: 383, 660, 710
+- hedge_10pct: 396, 535, 544
+
+Median run per mode by p99. Extra cost compares true provider billing per successful request with the hedging-off median run.
+
+### E10: What does the safety filter cost?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-15 22:30 → 22:30 (UTC) |
+| Commit | `1f32a8c6aa89` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | single process (filter only); 1 gateway node(s) max |
+| Load average at start | 4.01 |
+| Power | battery |
+| Repetitions | 3 (median reported) |
+
+Method: a 1.048576e+06-byte corpus streamed in uniform random 1-64 bytes, like SSE token deltas; patterns are two or three random words from a 5,000-word vocabulary (12-30 runes); ~1 pattern occurrence per 2 KB, many straddling chunk boundaries. Holdback delay is derived: holdback runes / 4 chars per token / 50 tokens per second.
+
+| Patterns | Throughput (MB/s) | Per-chunk time p50 / p99 (µs) | Holdback (runes) | Holdback delay at 50 tok/s (ms, derived) | Planted found | Split across chunks found | Recall |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 100 | 34.9 | 1.0 / 1.9 | 28 | 140 | 2254 / 2254 | 1017 / 1017 | 100.00% |
+| 1000 | 27.4 | 1.2 / 2.3 | 27 | 135 | 2130 / 2130 | 879 / 879 | 100.00% |
+| 10000 | 33.9 | 1.0 / 2.0 | 28 | 140 | 2184 / 2184 | 929 / 929 | 100.00% |
+
+Planted and split counts are summed over all runs. Throughput is measured in a separate pass without per-chunk timers.
+
 ## AWS
 
 _No results yet._
@@ -209,7 +292,4 @@ _No results yet._
 
 - E5: How does Raft behave?
 - E6: How fast does config reach gateways?
-- E8: Do cost budgets hold?
-- E9: Does hedging cut tail latency?
-- E10: What does the safety filter cost?
 - E11: Does safe rollout catch bad config?
