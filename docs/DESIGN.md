@@ -288,3 +288,46 @@ block_patterns "kid-safety" action redact
 - **E9** (40 req/s, TTFT median 100 ms with 5% of requests ×10, 2,400 requests per run, median of 3): TTFT p99 off **1,291 ms**; hedge max 1% 1,205 ms (−6.6%, +0.12% cost); **max 5% 660 ms (−48.9%) for +0.77% cost**; max 10% 535 ms (−58.6%) for +0.88% cost. p50 unchanged (~103 ms). The backup won 80–98% of hedges. Goal "cut p99 with under 5% extra cost" met.
 - **Why 10% barely beats 5%:** hedges fire only after the primary's p95, so at most ~5% of requests are ever late enough to hedge; the measured hedge rate at max 10% was 5.5–5.7%. A larger budget only helps if the trigger quantile drops too. Run-to-run variance is large at p99 (5%: 383–711 ms) because a 2,400-request run has only 24 samples above p99.
 - **E10:** see the earlier entry; 27–35 MB/s, ~2 µs p99 per chunk, 100% split recall.
+
+## M6: Raft control plane — plan
+
+### Shape: a pure Raft core, two drivers
+`internal/raft` is a **deterministic state machine**: no goroutines, no clock, no I/O. It exposes `Tick()`, `Step(Message)`, `Propose(data)`, `ReadIndex(ctx)` and `Ready()`/`Advance()` (the etcd-style protocol). A `Ready` carries what must happen next, in order: the hard state and new entries to **persist (fsync) before** any message in the same `Ready` is sent, a snapshot to install, messages to send, committed entries to apply, and confirmed reads. Two drivers run the same core:
+- `raft.Server`: real time (ticker), file storage with fsync, gRPC transport.
+- `internal/sim`: fake clock, fake network and in-memory storage, all driven by one seed. Any failure replays exactly from its seed.
+
+### Raft (Ongaro & Ousterhout 2014), fixed 3-node membership
+- **Election:** randomized timeout in [E, 2E) ticks, `RequestVote` with the log up-to-date check, a no-op entry on winning.
+- **Replication:** `AppendEntries` with the prev-index/term consistency check; on reject the follower returns its last index as a hint and the leader backs `next` off to `min(next − 1, hint + 1)`. Commit only entries of the current term once a majority match (§5.4.2). Empty `AppendEntries` serve as heartbeats.
+- **Persistence:** term, vote and entries are fsynced before replying; restart replays them.
+- **Snapshots:** the application snapshots after N applied entries; the log is compacted to the snapshot index; `InstallSnapshot` for followers whose `next` is below the first retained index.
+- **Linearizable reads:** `ReadIndex`: the leader records its commit index, confirms leadership with one heartbeat round acked by a majority, and serves the read once that index is applied. Followers redirect.
+
+### Storage (`internal/raft/wal`)
+An append-only log file of CRC-checked records (hard state; entry). On replay a later entry at index *i* truncates everything from *i* on (that's how conflicting suffixes are overwritten). Snapshots are written to a temp file, fsynced, renamed and the directory fsynced; the WAL is then rewritten without the compacted prefix the same way. A torn tail record (crash mid-write) is detected by the CRC and dropped.
+
+### Control plane (`internal/control/store`, `cmd/tollgate-control`)
+- The state machine is a versioned KV store: version = Raft index of the last applied change. It keeps a bounded change history for watchers.
+- The gRPC `ControlService`: `Put`/`Delete` (leader only; followers answer with the leader's address), `Get` (linearizable via ReadIndex), `Status`, and `Watch(from_version)` (a stream of every change after `from_version`; a full snapshot first if history was compacted past it).
+- **Rules:** the leader compiles (type-checks) rule source before proposing and rejects invalid rules. Gateways receive the validated **source** and compile it locally. **Deviation from the spec**, which says compiled rules are shipped: the compiler is deterministic and the gateway already has it, and shipping source avoids a bytecode serialization format and versioning problem. Recorded here; revisit if needed.
+- **Keys:** `rules` (rule source), `members` (gateway cluster membership for the hash ring, M4).
+
+### Gateways
+`control: {endpoints: [...]}` in the gateway YAML replaces `rules.file`. Each gateway watches from its last version, reconnects (and resumes) on failure, keeps serving its last good config if the control plane is down, and reports `tollgate_config_version` and `tollgate_config_propagation_seconds` (leader commit timestamp in the event → active on the gateway).
+
+### `tollgatectl`
+`rules push <file>`, `rules get`, `status`, `members set`.
+
+### Deterministic simulation (`internal/sim`)
+3 Raft cores + config stores on a fake network that drops, delays, duplicates and reorders messages, partitions nodes, and crashes and restarts them from their persisted state, all from one seed. Invariants checked continuously:
+- (1) at most one leader per term;
+- (2) log matching;
+- (3) state machine safety: no two nodes apply different entries at the same index;
+- (4) every committed proposal is applied on every node after healing;
+- (5) liveness: after healing, a leader emerges and pending proposals commit within a bound.
+
+Acceptance: 1,000+ seeds; CI runs a 200-seed smoke.
+
+### Experiments
+- **E5:** commit latency (Put through the leader, fsync on), leader failover time under writes (SIGKILL the leader; time until a new leader accepts a write), committed entries lost (must be 0: every acknowledged write must be readable after failover).
+- **E6:** commit 100 rule changes and measure commit-to-active time on all 3 gateways (p50/p99).
