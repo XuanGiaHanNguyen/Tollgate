@@ -96,3 +96,31 @@ routes:
 		})
 	}
 }
+
+func TestRulesAndAuth(t *testing.T) {
+	c, err := Parse([]byte(valid + `
+rules: {file: policy.tg}
+auth:
+  api_keys:
+    - {key: k1, user_id: u1, tier: free}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Rules.ReloadInterval != time.Second || c.Rules.Budget != 10000 || c.Rules.Engine != "vm" {
+		t.Errorf("rules defaults: %+v", c.Rules)
+	}
+	_, err = Parse([]byte(valid + `
+rules: {engine: jit}
+auth:
+  api_keys:
+    - {key: k1, user_id: u1}
+    - {key: k1, user_id: u2}
+    - {key: "", user_id: u3}
+`))
+	for _, w := range []string{"rules.engine must be vm or interp", "duplicate key", "key and user_id are required"} {
+		if err == nil || !strings.Contains(err.Error(), w) {
+			t.Errorf("error %v missing %q", err, w)
+		}
+	}
+}

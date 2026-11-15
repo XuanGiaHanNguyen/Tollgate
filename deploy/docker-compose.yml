@@ -13,7 +13,9 @@ services:
     build: {context: .., args: {BIN: tollgate-gw}}
     image: tollgate/tollgate-gw:dev
     command: ["-config", "/etc/tollgate/gateway.yaml", "-node", "gw-1"]
-    volumes: ["./gateway.yaml:/etc/tollgate/gateway.yaml:ro"]
+    volumes:
+      - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
+      - ./rules.tg:/etc/tollgate/rules.tg:ro
     ports: ["8080:8080", "9090:9090"]
     depends_on: [backend-1, backend-2, backend-3]
 

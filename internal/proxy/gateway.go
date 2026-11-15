@@ -49,6 +49,8 @@ type Gateway struct {
 	upstreams map[string]*Upstream
 	log       *slog.Logger
 	metrics   *metrics.Gateway
+	policy    *policy
+	stop      chan struct{}
 }
 
 // Options are optional hooks for New.
@@ -66,7 +68,8 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &Gateway{upstreams: map[string]*Upstream{}, log: log, metrics: opts.Metrics}
+	g := &Gateway{upstreams: map[string]*Upstream{}, log: log, metrics: opts.Metrics,
+		policy: newPolicy(cfg), stop: make(chan struct{})}
 	if m := opts.Metrics; m != nil {
 		// Metrics hooks run alongside any caller-supplied hooks.
 		userBreaker, userHealth := opts.OnBreakerChange, opts.OnHealthChange
@@ -204,10 +207,23 @@ func (g *Gateway) Start() {
 	for _, up := range g.upstreams {
 		up.health.Start()
 	}
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-g.stop:
+				return
+			case <-t.C:
+				g.policy.limiter.Sweep()
+			}
+		}
+	}()
 }
 
 // Stop halts health checkers.
 func (g *Gateway) Stop() {
+	close(g.stop)
 	for _, up := range g.upstreams {
 		up.health.Stop()
 	}
@@ -216,7 +232,7 @@ func (g *Gateway) Stop() {
 // Upstream returns an upstream by name (for admin/metrics).
 func (g *Gateway) Upstream(name string) *Upstream { return g.upstreams[name] }
 
-// ServeHTTP routes and proxies one request.
+// ServeHTTP routes, applies rule policy, and proxies one request.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route := g.router.Load().Match(r)
 	if route == nil {
@@ -224,6 +240,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if route.metrics == nil {
+		if status := g.applyPolicy(r); status != 0 {
+			writePolicyStatus(w, status)
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), route.cfg.Timeouts.Total)
 		defer cancel()
 		route.proxy.ServeHTTP(w, r.WithContext(ctx))
@@ -231,6 +251,13 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
+	if status := g.applyPolicy(r); status != 0 {
+		writePolicyStatus(w, status)
+		total := time.Since(start)
+		route.metrics.ObserveRequest(status, total.Seconds())
+		g.metrics.ObserveOverhead(total.Seconds())
+		return
+	}
 	st := statsPool.Get().(*reqStats)
 	*st = reqStats{}
 	sw := &statusWriter{ResponseWriter: w}

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -18,6 +20,7 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/proxy"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules"
 )
 
 func main() {
@@ -55,7 +58,6 @@ func run(cfgPath, node string, log *slog.Logger) error {
 		return err
 	}
 	m := metrics.NewGateway(node)
-	m.SetConfigVersion(1) // static file config; versions come from the control plane in M6
 	gw, err := proxy.New(cfg, proxy.Options{Logger: log, Metrics: m})
 	if err != nil {
 		return err
@@ -65,6 +67,28 @@ func run(cfgPath, node string, log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if cfg.Rules.File != "" {
+		path := cfg.Rules.File
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(filepath.Dir(cfgPath), path)
+		}
+		err := rules.Watch(ctx, path, cfg.Rules.ReloadInterval, rules.Options{Budget: cfg.Rules.Budget},
+			func(rs *rules.RuleSet, err error) {
+				if err != nil {
+					log.Error("rules not loaded; keeping the previous version", "file", path, "err", err.Error())
+					return
+				}
+				v := gw.SetRules(rs)
+				log.Info("rules loaded", "file", path, "version", v, "routes", len(rs.Routes), "engine", cfg.Rules.Engine)
+				for _, w := range rs.Warnings {
+					log.Warn("rule warning", "file", path, "msg", w.String())
+				}
+			})
+		if err != nil {
+			return fmt.Errorf("rules: %w", err)
+		}
+	}
 
 	var draining atomic.Bool
 	admin := http.NewServeMux()
@@ -78,6 +102,10 @@ func run(cfgPath, node string, log *slog.Logger) error {
 	})
 
 	admin.Handle("GET /metrics", m.Handler())
+	admin.HandleFunc("GET /admin/rules", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"version": gw.RulesVersion(), "file": cfg.Rules.File, "engine": cfg.Rules.Engine})
+	})
 	admin.HandleFunc("GET /admin/upstreams", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(gw.Status())

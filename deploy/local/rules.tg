@@ -1,0 +1,16 @@
+# Policy for the docker-compose gateway (rule language, M3).
+# Reloaded automatically when this file changes.
+
+let free_tier = user.tier == "free"
+
+route "/api/ai/*" {
+  require auth
+  when free_tier          { limit 10 per minute by user.id }
+  when user.tier == "pro" { limit 200 per minute by user.id }
+  when header("X-Debug") != "" { deny 403 }
+  set_header "X-User-Id" user.id
+}
+
+route "/api/public/*" {
+  limit 30 per minute by client.ip
+}

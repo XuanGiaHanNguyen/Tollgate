@@ -28,7 +28,17 @@ type Gateway struct {
 	breakerState  *prometheus.GaugeVec
 	backendHealth *prometheus.GaugeVec
 	configVersion prometheus.Gauge
+	ruleEval      map[string]prometheus.Observer // by engine
+	policy        map[string]prometheus.Counter  // by result
 }
+
+// Policy outcomes for tollgate_policy_decisions_total.
+const (
+	PolicyAllow   = "allow"
+	PolicyDeny    = "deny"
+	PolicyLimited = "limited"
+	PolicyError   = "error"
+)
 
 // NewGateway registers gateway metrics plus Go runtime and process
 // collectors on a fresh registry.
@@ -72,7 +82,21 @@ func NewGateway(node string) *Gateway {
 		Name: "tollgate_config_version",
 		Help: "Config version this gateway is running.",
 	}, []string{"node"})
-	reg.MustRegister(g.requests, g.duration, overhead, g.retries, g.breakerState, g.backendHealth, configVersion)
+	ruleEval := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "tollgate_rule_eval_seconds",
+		Help:    "Rule evaluation time per request.",
+		Buckets: prometheus.ExponentialBuckets(25e-9, 2, 18), // 25ns .. ~3ms
+	}, []string{"engine"})
+	policy := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tollgate_policy_decisions_total",
+		Help: "Rule policy outcomes: allow, deny (deny/require auth), limited (429), error (fail closed).",
+	}, []string{"result"})
+	reg.MustRegister(g.requests, g.duration, overhead, g.retries, g.breakerState, g.backendHealth, configVersion, ruleEval, policy)
+	g.ruleEval = map[string]prometheus.Observer{"vm": ruleEval.WithLabelValues("vm"), "interp": ruleEval.WithLabelValues("interp")}
+	g.policy = map[string]prometheus.Counter{}
+	for _, r := range []string{PolicyAllow, PolicyDeny, PolicyLimited, PolicyError} {
+		g.policy[r] = policy.WithLabelValues(r)
+	}
 	g.overhead = overhead.WithLabelValues(node)
 	g.configVersion = configVersion.WithLabelValues(node)
 	return g
@@ -110,6 +134,15 @@ func (g *Gateway) SetBackendHealthy(backend string, healthy bool) {
 	}
 	g.backendHealth.WithLabelValues(backend).Set(v)
 }
+
+// ObserveRuleEval records one rule evaluation. The maps are read-only after
+// construction, so concurrent lookups are safe.
+func (g *Gateway) ObserveRuleEval(engine string, seconds float64) {
+	g.ruleEval[engine].Observe(seconds)
+}
+
+// Policy counts one policy outcome.
+func (g *Gateway) Policy(result string) { g.policy[result].Inc() }
 
 // SetConfigVersion records the active config version.
 func (g *Gateway) SetConfigVersion(v uint64) { g.configVersion.Set(float64(v)) }

@@ -23,6 +23,29 @@ type Config struct {
 	Transport       Transport     `yaml:"transport"`
 	Upstreams       []Upstream    `yaml:"upstreams"`
 	Routes          []Route       `yaml:"routes"`
+	Rules           Rules         `yaml:"rules"`
+	Auth            Auth          `yaml:"auth"`
+}
+
+// Rules points at the policy file written in the rule language (M3).
+type Rules struct {
+	File           string        `yaml:"file"`            // "" = no policy, every routed request is allowed
+	ReloadInterval time.Duration `yaml:"reload_interval"` // how often the file is checked for changes
+	Budget         int           `yaml:"budget"`          // VM instructions per evaluation
+	Engine         string        `yaml:"engine"`          // "vm" (default) or "interp"
+}
+
+// Auth holds static API keys (M3). A request is authenticated when it sends
+// "Authorization: Bearer <key>" with a listed key.
+type Auth struct {
+	APIKeys []APIKey `yaml:"api_keys"`
+}
+
+// APIKey maps a key to a user identity visible to rules.
+type APIKey struct {
+	Key    string `yaml:"key"`
+	UserID string `yaml:"user_id"`
+	Tier   string `yaml:"tier"`
 }
 
 // RetryBudget caps retries as a share of traffic.
@@ -154,6 +177,15 @@ func (c *Config) setDefaults() {
 		t := true
 		c.Transport.ForceHTTP2 = &t
 	}
+	if c.Rules.ReloadInterval == 0 {
+		c.Rules.ReloadInterval = time.Second
+	}
+	if c.Rules.Budget == 0 {
+		c.Rules.Budget = 10_000
+	}
+	if c.Rules.Engine == "" {
+		c.Rules.Engine = "vm"
+	}
 	for i := range c.Routes {
 		r := &c.Routes[i]
 		if r.Name == "" {
@@ -223,6 +255,22 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Routes) == 0 {
 		add("at least one route is required")
+	}
+	if c.Rules.Engine != "vm" && c.Rules.Engine != "interp" {
+		add("rules.engine must be vm or interp, got %q", c.Rules.Engine)
+	}
+	if c.Rules.Budget < 0 {
+		add("rules.budget must be positive")
+	}
+	keys := map[string]bool{}
+	for i, k := range c.Auth.APIKeys {
+		if k.Key == "" || k.UserID == "" {
+			add("auth.api_keys[%d]: key and user_id are required", i)
+		}
+		if keys[k.Key] {
+			add("auth.api_keys[%d]: duplicate key", i)
+		}
+		keys[k.Key] = true
 	}
 	type key struct{ prefix, host, methods string }
 	seen := map[key]bool{}
