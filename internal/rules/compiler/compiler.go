@@ -98,6 +98,7 @@ type LimitInfo struct {
 	ID    int
 	Count int64
 	Unit  ast.Unit
+	Algo  uint8
 }
 
 // Prefix is a pre-parsed constant CIDR (OK=false: invalid, never matches).
@@ -193,7 +194,7 @@ func (c *compiler) stmts(ss []ast.Stmt) {
 			c.patchAll(falseJumps)
 		case *ast.Limit:
 			c.expr(s.Key)
-			c.ch.Limits = append(c.ch.Limits, LimitInfo{ID: s.ID, Count: s.Count, Unit: s.Unit})
+			c.ch.Limits = append(c.ch.Limits, LimitInfo{ID: s.ID, Count: s.Count, Unit: s.Unit, Algo: s.Algo})
 			c.emit(OpLimit, int32(len(c.ch.Limits)-1), 0, 0)
 			c.push(-1)
 		case *ast.Deny:
@@ -437,6 +438,9 @@ func (ch *Chunk) Disassemble() string {
 		case OpLimit:
 			l := ch.Limits[in.A]
 			line += fmt.Sprintf(" #%d %d/%s", l.ID, l.Count, l.Unit)
+			if l.Algo != 0 {
+				line += " " + ast.AlgoNames[l.Algo]
+			}
 		case OpLoadField, OpCallBuiltin, OpDeny, OpAnd, OpOr, OpJump, OpJumpIfFalse, OpJumpIfTrue:
 			line += fmt.Sprintf(" %d", in.A)
 		case OpFieldEqConst, OpFieldNeConst:

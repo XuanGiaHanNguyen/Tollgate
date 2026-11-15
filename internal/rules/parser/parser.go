@@ -282,9 +282,27 @@ func (p *parser) parseStmt() ast.Stmt {
 			p.syncStmt()
 			return nil
 		}
+		var algo uint8
+		if c := p.cur(); c.Kind == lexer.Ident && c.Text == "using" {
+			p.advance()
+			a, ok := p.expect(lexer.Ident, "algorithm after 'using' (token_bucket or sliding_window)")
+			if !ok {
+				p.syncStmt()
+				return nil
+			}
+			switch a.Text {
+			case "token_bucket":
+			case "sliding_window":
+				algo = 1
+			default:
+				p.errorf(a.Pos, "unknown limit algorithm %q (want token_bucket or sliding_window)", a.Text)
+				p.syncStmt()
+				return nil
+			}
+		}
 		id := p.limitID
 		p.limitID++
-		return &ast.Limit{Pos: t.Pos, ID: id, Count: count, Unit: unit, Key: key}
+		return &ast.Limit{Pos: t.Pos, ID: id, Count: count, Unit: unit, Key: key, Algo: algo}
 
 	case lexer.Deny:
 		n, ok := p.expect(lexer.Int, "HTTP status after 'deny'")

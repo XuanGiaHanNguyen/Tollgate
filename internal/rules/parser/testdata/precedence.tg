@@ -6,3 +6,7 @@ route "/x" {
   when a > 1 { when b { set_header "X-A" "1" } }
   deny 429
 }
+route "/algo" {
+  limit 5 per second by client.ip using sliding_window
+  limit 6 per second by client.ip using token_bucket
+}

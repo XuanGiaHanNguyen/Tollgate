@@ -12,3 +12,6 @@ route "/b" {
   limit 10 per minute by user.id
 banana
 route "/c" { deny 403 }
+route "/bad-algo" {
+  limit 5 per second by client.ip using leaky_bucket
+}

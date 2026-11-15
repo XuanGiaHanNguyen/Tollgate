@@ -69,7 +69,7 @@ func (e *evaluator) stmts(ss []ast.Stmt) {
 			if e.done {
 				return
 			}
-			if !e.d.AddLimit(env.LimitReq{ID: s.ID, Count: s.Count, Per: s.Unit.Duration(), Key: k.S}) {
+			if !e.d.AddLimit(env.LimitReq{ID: s.ID, Count: s.Count, Per: s.Unit.Duration(), Key: k.S, Algo: s.Algo}) {
 				e.fail(env.ErrTooMany)
 			}
 		case *ast.Deny:

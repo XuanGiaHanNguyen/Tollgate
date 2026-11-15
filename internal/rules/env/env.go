@@ -306,12 +306,19 @@ var (
 	ErrBadBytecode = errors.New("malformed bytecode")
 )
 
+// Limit algorithms (LimitReq.Algo).
+const (
+	AlgoTokenBucket   uint8 = 0
+	AlgoSlidingWindow uint8 = 1
+)
+
 // LimitReq is one limit that applies to this request.
 type LimitReq struct {
 	ID    int // unique per program; identifies the bucket together with Key
 	Count int64
 	Per   time.Duration
 	Key   string
+	Algo  uint8 // AlgoTokenBucket or AlgoSlidingWindow
 }
 
 // HeaderSet is one header to add.
