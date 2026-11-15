@@ -237,6 +237,262 @@ func (x *CheckLimitsResponse) GetAllowed() []bool {
 	return nil
 }
 
+type ReserveRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ReservationId    string                 `protobuf:"bytes,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	BudgetId         int32                  `protobuf:"varint,2,opt,name=budget_id,json=budgetId,proto3" json:"budget_id,omitempty"`
+	Key              string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	EstimateMicroUsd int64                  `protobuf:"varint,4,opt,name=estimate_micro_usd,json=estimateMicroUsd,proto3" json:"estimate_micro_usd,omitempty"`
+	AmountMicroUsd   int64                  `protobuf:"varint,5,opt,name=amount_micro_usd,json=amountMicroUsd,proto3" json:"amount_micro_usd,omitempty"` // budget size per period
+	PerNs            int64                  `protobuf:"varint,6,opt,name=per_ns,json=perNs,proto3" json:"per_ns,omitempty"`
+	TtlNs            int64                  `protobuf:"varint,7,opt,name=ttl_ns,json=ttlNs,proto3" json:"ttl_ns,omitempty"` // hold is released at this deadline if never settled
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ReserveRequest) Reset() {
+	*x = ReserveRequest{}
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReserveRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReserveRequest) ProtoMessage() {}
+
+func (x *ReserveRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReserveRequest.ProtoReflect.Descriptor instead.
+func (*ReserveRequest) Descriptor() ([]byte, []int) {
+	return file_tollgate_v1_ratelimit_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ReserveRequest) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *ReserveRequest) GetBudgetId() int32 {
+	if x != nil {
+		return x.BudgetId
+	}
+	return 0
+}
+
+func (x *ReserveRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *ReserveRequest) GetEstimateMicroUsd() int64 {
+	if x != nil {
+		return x.EstimateMicroUsd
+	}
+	return 0
+}
+
+func (x *ReserveRequest) GetAmountMicroUsd() int64 {
+	if x != nil {
+		return x.AmountMicroUsd
+	}
+	return 0
+}
+
+func (x *ReserveRequest) GetPerNs() int64 {
+	if x != nil {
+		return x.PerNs
+	}
+	return 0
+}
+
+func (x *ReserveRequest) GetTtlNs() int64 {
+	if x != nil {
+		return x.TtlNs
+	}
+	return 0
+}
+
+type ReserveResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Ok              bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	BalanceMicroUsd int64                  `protobuf:"varint,2,opt,name=balance_micro_usd,json=balanceMicroUsd,proto3" json:"balance_micro_usd,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ReserveResponse) Reset() {
+	*x = ReserveResponse{}
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReserveResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReserveResponse) ProtoMessage() {}
+
+func (x *ReserveResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReserveResponse.ProtoReflect.Descriptor instead.
+func (*ReserveResponse) Descriptor() ([]byte, []int) {
+	return file_tollgate_v1_ratelimit_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ReserveResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *ReserveResponse) GetBalanceMicroUsd() int64 {
+	if x != nil {
+		return x.BalanceMicroUsd
+	}
+	return 0
+}
+
+type SettleRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ReservationId  string                 `protobuf:"bytes,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	BudgetId       int32                  `protobuf:"varint,2,opt,name=budget_id,json=budgetId,proto3" json:"budget_id,omitempty"`
+	Key            string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	ActualMicroUsd int64                  `protobuf:"varint,4,opt,name=actual_micro_usd,json=actualMicroUsd,proto3" json:"actual_micro_usd,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SettleRequest) Reset() {
+	*x = SettleRequest{}
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SettleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SettleRequest) ProtoMessage() {}
+
+func (x *SettleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SettleRequest.ProtoReflect.Descriptor instead.
+func (*SettleRequest) Descriptor() ([]byte, []int) {
+	return file_tollgate_v1_ratelimit_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SettleRequest) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *SettleRequest) GetBudgetId() int32 {
+	if x != nil {
+		return x.BudgetId
+	}
+	return 0
+}
+
+func (x *SettleRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *SettleRequest) GetActualMicroUsd() int64 {
+	if x != nil {
+		return x.ActualMicroUsd
+	}
+	return 0
+}
+
+type SettleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Applied       bool                   `protobuf:"varint,1,opt,name=applied,proto3" json:"applied,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SettleResponse) Reset() {
+	*x = SettleResponse{}
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SettleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SettleResponse) ProtoMessage() {}
+
+func (x *SettleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_tollgate_v1_ratelimit_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SettleResponse.ProtoReflect.Descriptor instead.
+func (*SettleResponse) Descriptor() ([]byte, []int) {
+	return file_tollgate_v1_ratelimit_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SettleResponse) GetApplied() bool {
+	if x != nil {
+		return x.Applied
+	}
+	return false
+}
+
 var File_tollgate_v1_ratelimit_proto protoreflect.FileDescriptor
 
 const file_tollgate_v1_ratelimit_proto_rawDesc = "" +
@@ -251,13 +507,33 @@ const file_tollgate_v1_ratelimit_proto_rawDesc = "" +
 	"\x12CheckLimitsRequest\x12*\n" +
 	"\x06checks\x18\x01 \x03(\v2\x12.tollgate.v1.CheckR\x06checks\"/\n" +
 	"\x13CheckLimitsResponse\x12\x18\n" +
-	"\aallowed\x18\x01 \x03(\bR\aallowed*`\n" +
+	"\aallowed\x18\x01 \x03(\bR\aallowed\"\xec\x01\n" +
+	"\x0eReserveRequest\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x1b\n" +
+	"\tbudget_id\x18\x02 \x01(\x05R\bbudgetId\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\x12,\n" +
+	"\x12estimate_micro_usd\x18\x04 \x01(\x03R\x10estimateMicroUsd\x12(\n" +
+	"\x10amount_micro_usd\x18\x05 \x01(\x03R\x0eamountMicroUsd\x12\x15\n" +
+	"\x06per_ns\x18\x06 \x01(\x03R\x05perNs\x12\x15\n" +
+	"\x06ttl_ns\x18\a \x01(\x03R\x05ttlNs\"M\n" +
+	"\x0fReserveResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12*\n" +
+	"\x11balance_micro_usd\x18\x02 \x01(\x03R\x0fbalanceMicroUsd\"\x8f\x01\n" +
+	"\rSettleRequest\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x1b\n" +
+	"\tbudget_id\x18\x02 \x01(\x05R\bbudgetId\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\x12(\n" +
+	"\x10actual_micro_usd\x18\x04 \x01(\x03R\x0eactualMicroUsd\"*\n" +
+	"\x0eSettleResponse\x12\x18\n" +
+	"\aapplied\x18\x01 \x01(\bR\aapplied*`\n" +
 	"\tAlgorithm\x12\x19\n" +
 	"\x15ALGORITHM_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16ALGORITHM_TOKEN_BUCKET\x10\x01\x12\x1c\n" +
-	"\x18ALGORITHM_SLIDING_WINDOW\x10\x022d\n" +
+	"\x18ALGORITHM_SLIDING_WINDOW\x10\x022\xed\x01\n" +
 	"\x10RateLimitService\x12P\n" +
-	"\vCheckLimits\x12\x1f.tollgate.v1.CheckLimitsRequest\x1a .tollgate.v1.CheckLimitsResponseBEZCgithub.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1;tollgatev1b\x06proto3"
+	"\vCheckLimits\x12\x1f.tollgate.v1.CheckLimitsRequest\x1a .tollgate.v1.CheckLimitsResponse\x12D\n" +
+	"\aReserve\x12\x1b.tollgate.v1.ReserveRequest\x1a\x1c.tollgate.v1.ReserveResponse\x12A\n" +
+	"\x06Settle\x12\x1a.tollgate.v1.SettleRequest\x1a\x1b.tollgate.v1.SettleResponseBEZCgithub.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1;tollgatev1b\x06proto3"
 
 var (
 	file_tollgate_v1_ratelimit_proto_rawDescOnce sync.Once
@@ -272,20 +548,28 @@ func file_tollgate_v1_ratelimit_proto_rawDescGZIP() []byte {
 }
 
 var file_tollgate_v1_ratelimit_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_tollgate_v1_ratelimit_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_tollgate_v1_ratelimit_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_tollgate_v1_ratelimit_proto_goTypes = []any{
 	(Algorithm)(0),              // 0: tollgate.v1.Algorithm
 	(*Check)(nil),               // 1: tollgate.v1.Check
 	(*CheckLimitsRequest)(nil),  // 2: tollgate.v1.CheckLimitsRequest
 	(*CheckLimitsResponse)(nil), // 3: tollgate.v1.CheckLimitsResponse
+	(*ReserveRequest)(nil),      // 4: tollgate.v1.ReserveRequest
+	(*ReserveResponse)(nil),     // 5: tollgate.v1.ReserveResponse
+	(*SettleRequest)(nil),       // 6: tollgate.v1.SettleRequest
+	(*SettleResponse)(nil),      // 7: tollgate.v1.SettleResponse
 }
 var file_tollgate_v1_ratelimit_proto_depIdxs = []int32{
 	0, // 0: tollgate.v1.Check.algorithm:type_name -> tollgate.v1.Algorithm
 	1, // 1: tollgate.v1.CheckLimitsRequest.checks:type_name -> tollgate.v1.Check
 	2, // 2: tollgate.v1.RateLimitService.CheckLimits:input_type -> tollgate.v1.CheckLimitsRequest
-	3, // 3: tollgate.v1.RateLimitService.CheckLimits:output_type -> tollgate.v1.CheckLimitsResponse
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
+	4, // 3: tollgate.v1.RateLimitService.Reserve:input_type -> tollgate.v1.ReserveRequest
+	6, // 4: tollgate.v1.RateLimitService.Settle:input_type -> tollgate.v1.SettleRequest
+	3, // 5: tollgate.v1.RateLimitService.CheckLimits:output_type -> tollgate.v1.CheckLimitsResponse
+	5, // 6: tollgate.v1.RateLimitService.Reserve:output_type -> tollgate.v1.ReserveResponse
+	7, // 7: tollgate.v1.RateLimitService.Settle:output_type -> tollgate.v1.SettleResponse
+	5, // [5:8] is the sub-list for method output_type
+	2, // [2:5] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
 	2, // [2:2] is the sub-list for extension extendee
 	0, // [0:2] is the sub-list for field type_name
@@ -302,7 +586,7 @@ func file_tollgate_v1_ratelimit_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tollgate_v1_ratelimit_proto_rawDesc), len(file_tollgate_v1_ratelimit_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

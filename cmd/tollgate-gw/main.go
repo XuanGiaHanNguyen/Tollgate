@@ -102,7 +102,7 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 			return err
 		}
 		peerSrv = grpc.NewServer()
-		tollgatev1.RegisterRateLimitServiceServer(peerSrv, &peer.Server{Store: lim.Local()})
+		tollgatev1.RegisterRateLimitServiceServer(peerSrv, &peer.Server{Store: lim.Local(), Budget: lim.Budgets()})
 		go func() {
 			if err := peerSrv.Serve(ln); err != nil {
 				log.Error("peer gRPC server stopped", "err", err)

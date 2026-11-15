@@ -7,10 +7,10 @@ import (
 
 func TestEstimate(t *testing.T) {
 	tests := map[string]int64{
-		"":                    0,
-		"hi":                  1,
-		"hello world":         3, // 11 bytes -> ceil(11/4)=3 >= 2 words
-		"a b c d e f g h":     8, // 8 words beat ceil(15/4)=4
+		"":                     0,
+		"hi":                   1,
+		"hello world":          3, // 11 bytes -> ceil(11/4)=3 >= 2 words
+		"a b c d e f g h":      8, // 8 words beat ceil(15/4)=4
 		"supercalifragilistic": 5,
 	}
 	for in, want := range tests {

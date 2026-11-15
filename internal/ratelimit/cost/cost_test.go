@@ -14,9 +14,9 @@ func (c *clock) now() time.Time          { return time.Unix(0, c.t.Load()) }
 func (c *clock) advance(d time.Duration) { c.t.Add(int64(d)) }
 
 const (
-	day    = 24 * time.Hour
+	day     = 24 * time.Hour
 	fiveUSD = 5_000_000 // $5.00
-	ttl    = 2 * time.Minute
+	ttl     = 2 * time.Minute
 )
 
 var k = Key{1, "alice"}

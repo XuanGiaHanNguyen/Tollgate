@@ -321,6 +321,17 @@ type LimitReq struct {
 	Algo  uint8 // AlgoTokenBucket or AlgoSlidingWindow
 }
 
+// MaxBudgets caps budgets per evaluation.
+const MaxBudgets = 4
+
+// BudgetReq is one cost budget that applies to this request.
+type BudgetReq struct {
+	ID     int   // unique per program, like LimitReq.ID
+	Amount int64 // micro-USD per period
+	Per    time.Duration
+	Key    string
+}
+
 // HeaderSet is one header to add.
 type HeaderSet struct{ Name, Value string }
 
@@ -331,6 +342,8 @@ type Decision struct {
 	NLimits  int
 	Headers  [MaxHeaders]HeaderSet
 	NHeaders int
+	Budgets  [MaxBudgets]BudgetReq
+	NBudgets int
 	Steps    int   // instructions (VM) or nodes (interpreter) executed
 	Err      error // non-nil: evaluation failed; callers fail closed
 }
@@ -342,6 +355,16 @@ func (d *Decision) AddLimit(l LimitReq) bool {
 	}
 	d.Limits[d.NLimits] = l
 	d.NLimits++
+	return true
+}
+
+// AddBudget appends a budget, reporting false when the cap is reached.
+func (d *Decision) AddBudget(b BudgetReq) bool {
+	if d.NBudgets == MaxBudgets {
+		return false
+	}
+	d.Budgets[d.NBudgets] = b
+	d.NBudgets++
 	return true
 }
 
@@ -358,7 +381,7 @@ func (d *Decision) AddHeader(h HeaderSet) bool {
 // SameOutcome compares the observable parts of two decisions (not Steps),
 // used by differential tests.
 func (d *Decision) SameOutcome(o *Decision) bool {
-	if (d.Err == nil) != (o.Err == nil) || d.Deny != o.Deny || d.NLimits != o.NLimits || d.NHeaders != o.NHeaders {
+	if (d.Err == nil) != (o.Err == nil) || d.Deny != o.Deny || d.NLimits != o.NLimits || d.NHeaders != o.NHeaders || d.NBudgets != o.NBudgets {
 		return false
 	}
 	if d.Err != nil {
@@ -371,6 +394,11 @@ func (d *Decision) SameOutcome(o *Decision) bool {
 	}
 	for i := 0; i < d.NHeaders; i++ {
 		if d.Headers[i] != o.Headers[i] {
+			return false
+		}
+	}
+	for i := 0; i < d.NBudgets; i++ {
+		if d.Budgets[i] != o.Budgets[i] {
 			return false
 		}
 	}

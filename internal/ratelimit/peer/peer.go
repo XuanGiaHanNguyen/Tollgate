@@ -14,12 +14,27 @@ import (
 
 	tollgatev1 "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/bucket"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/cost"
 )
 
-// Server answers CheckLimits for the keys this node owns.
+// Server answers CheckLimits, Reserve and Settle for the keys this node owns.
 type Server struct {
 	tollgatev1.UnimplementedRateLimitServiceServer
-	Store *bucket.Store
+	Store  *bucket.Store
+	Budget *cost.Store
+}
+
+// Reserve holds an estimated cost on this node.
+func (s *Server) Reserve(_ context.Context, r *tollgatev1.ReserveRequest) (*tollgatev1.ReserveResponse, error) {
+	ok, bal := s.Budget.Reserve(r.ReservationId, cost.Key{BudgetID: int(r.BudgetId), Value: r.Key},
+		r.EstimateMicroUsd, r.AmountMicroUsd, time.Duration(r.PerNs), time.Duration(r.TtlNs))
+	return &tollgatev1.ReserveResponse{Ok: ok, BalanceMicroUsd: bal}, nil
+}
+
+// Settle charges the real cost for a reservation on this node.
+func (s *Server) Settle(_ context.Context, r *tollgatev1.SettleRequest) (*tollgatev1.SettleResponse, error) {
+	applied := s.Budget.Settle(r.ReservationId, cost.Key{BudgetID: int(r.BudgetId), Value: r.Key}, r.ActualMicroUsd)
+	return &tollgatev1.SettleResponse{Applied: applied}, nil
 }
 
 // CheckLimits applies each check to the local store, in order.
@@ -119,6 +134,21 @@ func (c *Client) Close() error {
 
 // Name is the peer's member name.
 func (c *Client) Name() string { return c.name }
+
+// Reserve forwards a reservation to the peer (not batched: one per model
+// call, far rarer than limit checks).
+func (c *Client) Reserve(ctx context.Context, r *tollgatev1.ReserveRequest) (*tollgatev1.ReserveResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
+	defer cancel()
+	return c.rpc.Reserve(ctx, r)
+}
+
+// Settle forwards a settlement to the peer.
+func (c *Client) Settle(ctx context.Context, r *tollgatev1.SettleRequest) (*tollgatev1.SettleResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
+	defer cancel()
+	return c.rpc.Settle(ctx, r)
+}
 
 // Check asks the peer to apply one check and waits for the answer.
 func (c *Client) Check(ctx context.Context, ck *tollgatev1.Check) (bool, error) {

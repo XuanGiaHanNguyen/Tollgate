@@ -15,6 +15,7 @@ import (
 	tollgatev1 "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/breaker"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/bucket"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/cost"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/peer"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/ring"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/env"
@@ -42,6 +43,7 @@ type Config struct {
 	Hooks   peer.Hooks
 	// OnDecision is called once per check with ResultAllow/Deny/Degraded.
 	OnDecision func(result string)
+	Budget     BudgetHooks
 }
 
 type peerConn struct {
@@ -57,14 +59,31 @@ type Limiter struct {
 	fallback   *bucket.Store // degraded decisions for unreachable owners
 	peers      map[string]*peerConn
 	onDecision func(string)
+
+	costLocal    *cost.Store // budgets this node owns (also served to peers)
+	costFallback *cost.Store // degraded holds for unreachable owners
+	budgetHooks  BudgetHooks
+	stop         chan struct{}
 }
 
 // NewLocal returns a single-node limiter (no cluster configured).
-func NewLocal(onDecision func(string)) *Limiter {
+func NewLocal(onDecision func(string), hooks BudgetHooks) *Limiter {
 	l := &Limiter{local: bucket.New(nil), fallback: bucket.New(nil), peers: map[string]*peerConn{}, onDecision: onDecision}
+	l.initBudgets(hooks)
 	r, _ := ring.New(nil, 0)
 	l.ring.Store(r)
 	return l
+}
+
+func (l *Limiter) initBudgets(h BudgetHooks) {
+	l.costLocal, l.costFallback, l.budgetHooks = cost.New(nil), cost.New(nil), h
+	if h.Expired != nil {
+		l.costLocal.OnExpire = func(_ cost.Key, amt int64) { h.Expired(amt) }
+		l.costFallback.OnExpire = l.costLocal.OnExpire
+	}
+	l.stop = make(chan struct{})
+	go l.costLocal.Run(time.Second, l.stop)
+	go l.costFallback.Run(time.Second, l.stop)
 }
 
 // New builds a cluster limiter and dials every peer.
@@ -84,6 +103,7 @@ func New(cfg Config) (*Limiter, error) {
 	}
 	l := &Limiter{self: cfg.Self, local: bucket.New(nil), fallback: bucket.New(nil),
 		peers: map[string]*peerConn{}, onDecision: cfg.OnDecision}
+	l.initBudgets(cfg.Budget)
 	l.ring.Store(r)
 	for _, m := range cfg.Members {
 		if m.Name == cfg.Self {
@@ -103,6 +123,13 @@ func New(cfg Config) (*Limiter, error) {
 
 // Close shuts down peer connections.
 func (l *Limiter) Close() {
+	if l.stop != nil {
+		select {
+		case <-l.stop:
+		default:
+			close(l.stop)
+		}
+	}
 	for _, p := range l.peers {
 		p.client.Close()
 	}

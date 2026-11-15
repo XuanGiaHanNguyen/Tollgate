@@ -67,7 +67,7 @@ func cluster(t *testing.T, size int, pc peer.Config) []*node {
 		}
 		n.lim = lim
 		n.srv = grpc.NewServer()
-		tollgatev1.RegisterRateLimitServiceServer(n.srv, &peer.Server{Store: lim.Local()})
+		tollgatev1.RegisterRateLimitServiceServer(n.srv, &peer.Server{Store: lim.Local(), Budget: lim.Budgets()})
 		go n.srv.Serve(lns[i])
 		nodes[i] = n
 	}
@@ -174,7 +174,7 @@ func TestLocalOwnerNoRPC(t *testing.T) {
 }
 
 func TestNewLocalAndBadConfig(t *testing.T) {
-	l := NewLocal(nil)
+	l := NewLocal(nil, BudgetHooks{})
 	lr := env.LimitReq{ID: 1, Key: "k", Count: 2, Per: time.Hour, Algo: env.AlgoSlidingWindow}
 	a, _ := l.Allow(context.Background(), lr)
 	b, _ := l.Allow(context.Background(), lr)

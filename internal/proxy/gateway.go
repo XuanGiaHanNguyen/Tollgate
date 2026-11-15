@@ -79,7 +79,7 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 		if opts.Metrics != nil {
 			onDecision = opts.Metrics.RateLimitDecision
 		}
-		lim = ratelimit.NewLocal(onDecision)
+		lim = ratelimit.NewLocal(onDecision, ratelimit.BudgetHooks{})
 	}
 	g.policy = newPolicy(cfg, lim)
 	if m := opts.Metrics; m != nil {
