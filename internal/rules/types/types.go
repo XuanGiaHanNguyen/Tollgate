@@ -98,11 +98,12 @@ func (c *checker) expr(e ast.Expr) env.Type {
 		}
 		return t
 	case *ast.Field:
-		_, t, ok := env.LookupField(e.Obj, e.Name)
+		id, t, ok := env.LookupField(e.Obj, e.Name)
 		if !ok {
 			c.errorf(e.Pos, "unknown field %s.%s", e.Obj, e.Name)
 			return env.Invalid
 		}
+		e.ID = int(id)
 		return t
 	case *ast.Call:
 		b, ok := env.LookupBuiltin(e.Fn)
@@ -113,6 +114,7 @@ func (c *checker) expr(e ast.Expr) env.Type {
 			}
 			return env.Invalid
 		}
+		e.Builtin = int(b.ID)
 		if len(e.Args) != len(b.Params) {
 			c.errorf(e.Pos, "%s takes %d argument(s), found %d", b.Name, len(b.Params), len(e.Args))
 		}

@@ -100,7 +100,7 @@ func (o *optimizer) expr(e ast.Expr) ast.Expr {
 				args[0] = &ast.StringLit{Pos: s.Pos, Value: env.CanonicalHeaderArg(s.Value)}
 			}
 		}
-		return &ast.Call{Pos: e.Pos, Fn: e.Fn, Args: args}
+		return &ast.Call{Pos: e.Pos, Fn: e.Fn, Args: args, Builtin: e.Builtin}
 	case *ast.Unary:
 		x := o.expr(e.X)
 		switch e.Op {

@@ -185,7 +185,7 @@ func (a *analyzer) expandDepth(e ast.Expr, depth int) ast.Expr {
 		for i, x := range e.Args {
 			args[i] = a.expandDepth(x, depth+1)
 		}
-		return &ast.Call{Pos: e.Pos, Fn: e.Fn, Args: args}
+		return &ast.Call{Pos: e.Pos, Fn: e.Fn, Args: args, Builtin: e.Builtin}
 	}
 	return e
 }

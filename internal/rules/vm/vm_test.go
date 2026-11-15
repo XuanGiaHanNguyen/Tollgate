@@ -8,6 +8,7 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/env"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/opt"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/parser"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/types"
 )
 
 func compile(t testing.TB, src string) *compiler.Chunk {
@@ -15,6 +16,9 @@ func compile(t testing.TB, src string) *compiler.Chunk {
 	prog, d := parser.Parse(src)
 	if len(d) > 0 {
 		t.Fatal(d)
+	}
+	if _, td := types.Check(prog); len(td) > 0 {
+		t.Fatal(td)
 	}
 	o, _ := opt.Optimize(prog)
 	ch, cd := compiler.Compile(o.Routes()[0])

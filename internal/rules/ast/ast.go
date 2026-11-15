@@ -224,14 +224,18 @@ type (
 		Pos  Pos
 		Name string
 	}
+	// Field and Call carry IDs resolved once by the type checker, so
+	// neither engine resolves names at evaluation time.
 	Field struct {
 		Pos       Pos
 		Obj, Name string
+		ID        int
 	}
 	Call struct {
-		Pos  Pos
-		Fn   string
-		Args []Expr
+		Pos     Pos
+		Fn      string
+		Args    []Expr
+		Builtin int
 	}
 	Unary struct {
 		Pos Pos

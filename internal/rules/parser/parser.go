@@ -413,10 +413,10 @@ func (p *parser) parsePrimary() ast.Expr {
 			if !ok {
 				return nil
 			}
-			return &ast.Field{Pos: t.Pos, Obj: t.Text, Name: name.Text}
+			return &ast.Field{Pos: t.Pos, Obj: t.Text, Name: name.Text, ID: -1} // resolved by types
 		case lexer.LParen:
 			p.advance()
-			call := &ast.Call{Pos: t.Pos, Fn: t.Text}
+			call := &ast.Call{Pos: t.Pos, Fn: t.Text, Builtin: -1} // resolved by types
 			if p.cur().Kind == lexer.RParen {
 				p.advance()
 				return call

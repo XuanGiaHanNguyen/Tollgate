@@ -167,15 +167,19 @@ func (c *compiler) expr(e ast.Expr) {
 		c.emit(OpPushConst, c.constant(env.BoolVal(e.Value)))
 		c.push(1)
 	case *ast.Field:
-		id, _, _ := env.LookupField(e.Obj, e.Name)
-		c.emit(OpLoadField, int32(id))
+		if e.ID < 0 {
+			c.diags = append(c.diags, ast.Errorf("compiler", e.Pos, "internal error: field %s.%s not resolved (type checker not run)", e.Obj, e.Name))
+		}
+		c.emit(OpLoadField, int32(e.ID))
 		c.push(1)
 	case *ast.Call:
-		b, _ := env.LookupBuiltin(e.Fn)
 		for _, a := range e.Args {
 			c.expr(a)
 		}
-		c.emit(OpCallBuiltin, int32(b.ID))
+		if e.Builtin < 0 {
+			c.diags = append(c.diags, ast.Errorf("compiler", e.Pos, "internal error: call %s not resolved (type checker not run)", e.Fn))
+		}
+		c.emit(OpCallBuiltin, int32(e.Builtin))
 		c.push(1 - len(e.Args))
 	case *ast.Unary:
 		c.expr(e.X)

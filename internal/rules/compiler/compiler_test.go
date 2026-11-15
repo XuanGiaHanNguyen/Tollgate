@@ -8,6 +8,7 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/internal/golden"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/opt"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/parser"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/types"
 )
 
 func TestGoldenDisassembly(t *testing.T) {
@@ -17,6 +18,9 @@ func TestGoldenDisassembly(t *testing.T) {
 			prog, d := parser.Parse(string(src))
 			if len(d) > 0 {
 				t.Fatal(d)
+			}
+			if _, td := types.Check(prog); len(td) > 0 {
+				t.Fatal(td)
 			}
 			o, _ := opt.Optimize(prog)
 			var b strings.Builder
@@ -35,6 +39,9 @@ func TestGoldenDisassembly(t *testing.T) {
 func TestForwardJumpsOnly(t *testing.T) {
 	src, _ := os.ReadFile("testdata/spec_example.tg")
 	prog, _ := parser.Parse(string(src))
+	if _, td := types.Check(prog); len(td) > 0 {
+		t.Fatal(td)
+	}
 	o, _ := opt.Optimize(prog)
 	for _, r := range o.Routes() {
 		ch, _ := Compile(r)
@@ -57,9 +64,20 @@ func TestStackLimit(t *testing.T) {
 	if len(d) > 0 {
 		t.Fatal(d)
 	}
+	if _, td := types.Check(prog); len(td) > 0 {
+		t.Fatal(td)
+	}
 	o, _ := opt.Optimize(prog)
 	_, cd := Compile(o.Routes()[0])
 	if len(cd) == 0 || !strings.Contains(cd[0].Msg, "stack") {
+		t.Fatalf("diags = %v", cd)
+	}
+}
+
+func TestRefusesUntypedAST(t *testing.T) {
+	prog, _ := parser.Parse(`route "/a" { when header("x") == user.id { deny 403 } }`)
+	o, _ := opt.Optimize(prog) // types.Check deliberately skipped
+	if _, cd := Compile(o.Routes()[0]); len(cd) != 2 {
 		t.Fatalf("diags = %v", cd)
 	}
 }

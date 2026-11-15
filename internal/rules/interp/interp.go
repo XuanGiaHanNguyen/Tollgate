@@ -101,10 +101,8 @@ func (e *evaluator) expr(x ast.Expr) env.Value {
 	case *ast.Ident:
 		return e.expr(e.lets[x.Name])
 	case *ast.Field:
-		id, _, _ := env.LookupField(x.Obj, x.Name)
-		return env.StringVal(e.r.Field(id))
+		return env.StringVal(e.r.Field(env.FieldID(x.ID)))
 	case *ast.Call:
-		b, _ := env.LookupBuiltin(x.Fn)
 		var buf [2]env.Value
 		args := buf[:0]
 		for _, a := range x.Args {
@@ -113,7 +111,7 @@ func (e *evaluator) expr(x ast.Expr) env.Value {
 		if e.done {
 			return env.Value{}
 		}
-		return env.Call(b.ID, args, e.r)
+		return env.Call(env.BuiltinID(x.Builtin), args, e.r)
 	case *ast.Unary:
 		v := e.expr(x.X)
 		if x.Op == ast.OpNot {

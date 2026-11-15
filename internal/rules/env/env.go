@@ -93,6 +93,12 @@ type Request struct {
 	Host          string
 	Header        http.Header
 	RawQuery      string
+
+	// client IP parsed on first use, so many cidr_match calls in one
+	// evaluation parse it once
+	ipParsed bool
+	ipOK     bool
+	ip       netip.Addr
 }
 
 // Field returns a request field.
@@ -157,7 +163,7 @@ func Call(id BuiltinID, args []Value, r *Request) Value {
 	case BuiltinQuery:
 		return StringVal(queryValue(r.RawQuery, args[0].S))
 	case BuiltinCIDRMatch:
-		return BoolVal(cidrMatch(args[0].S, args[1].S))
+		return BoolVal(r.cidrMatch(args[0].S, args[1].S))
 	}
 	return Value{}
 }
@@ -194,10 +200,23 @@ func queryValue(raw, key string) string {
 	return ""
 }
 
-func cidrMatch(ip, cidr string) bool {
-	addr, err := netip.ParseAddr(ip)
-	if err != nil {
-		return false
+func (r *Request) cidrMatch(ip, cidr string) bool {
+	var addr netip.Addr
+	if ip == r.ClientIP {
+		if !r.ipParsed {
+			a, err := netip.ParseAddr(ip)
+			r.ip, r.ipOK, r.ipParsed = a, err == nil, true
+		}
+		if !r.ipOK {
+			return false
+		}
+		addr = r.ip
+	} else {
+		a, err := netip.ParseAddr(ip)
+		if err != nil {
+			return false
+		}
+		addr = a
 	}
 	pfx, err := netip.ParsePrefix(cidr)
 	if err != nil {
