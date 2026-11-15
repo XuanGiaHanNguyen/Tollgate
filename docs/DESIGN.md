@@ -144,3 +144,10 @@ Golden files under each package's `testdata/` (input `.tg`, expected tokens / AS
 
 ### E2
 `bench/go/rules_bench_test.go`: 5 rule sets from small to large (generated deterministically), VM vs interpreter, `-benchmem`. `go run ./bench/run e2` runs it 3× (`-count=3`), takes the median, and writes the result file.
+- **Machine sleep invalidated the first full run.** With the lid closed on battery the laptop slept between runs, which k6 counted as thousands of dropped iterations. Nothing was recorded. The runner now discards any k6 run that takes 20 s longer than planned and records AC vs battery. The final E1 started on battery; E7 ran on AC.
+
+## M2: measured results (laptop; full tables in METRICS.md)
+
+- **E1:** 1 gateway and 3 gateways each sustained 15,000 req/s with p99 < 10 ms; direct passed the top level tested (20,000). Added median latency ≈ 0.05 ms from 2,500 to 15,000 req/s. In-gateway overhead ≈ 25 µs p50 / ≤ 50 µs p99 (bucket resolution). 1 gateway used 1.23 cores at 15k. **Goal check:** "overhead p99 under 2 ms at moderate load" holds for the in-gateway overhead (≤ 50 µs); end-to-end added p99 is dominated by laptop noise (it ranges from −1.7 to +1.0 ms below 15k).
+- **3 gateways do not beat 1 on the laptop.** At 20,000 req/s, 3 gateways collapsed (p99 976 ms, 7.5% errors, 483k dropped iterations), because k6, 3 gateways and 3 backends compete for 8 cores (load average 32.9 right after). This is a property of the test machine, not a gateway limit; multi-node scaling has to be measured on AWS (M8).
+- **E7:** with one backend failing 50%, the breaker cut the error rate clients saw from 16.7% to 1.4% (median runs). It opened 2.86–3.08 s after the failure (expected ≈ 3 s from window 5 s × 0.3/0.5) and closed 1.0–1.6 s after recovery (cooldown 2 s, so it closes on the next half-open probe round). It re-opened ~15 times during the 40 s failing phase, since half-open probes keep hitting 50% errors. Failing-phase p99 was 6.2 ms on vs 6.4 ms off: as predicted, fast 500s don't hurt latency, so the breaker's benefit here is errors, not p99.

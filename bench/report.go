@@ -189,6 +189,8 @@ func writeE1(b *strings.Builder, r *benchfmt.Result) {
 		max := fmt.Sprintf("%d", t.MaxSustainedRPS)
 		if t.MaxSustainedRPS == 0 {
 			max = "none passed"
+		} else if n := len(t.Levels); n > 0 && t.Levels[n-1].Pass {
+			max = fmt.Sprintf("≥ %d (highest level tested; limit not reached)", t.MaxSustainedRPS)
 		}
 		fmt.Fprintf(b, "| %s | %s | %s | %s |\n", targetLabel[t.Name], max, cpu, rss)
 	}
@@ -209,6 +211,7 @@ func writeE1(b *strings.Builder, r *benchfmt.Result) {
 		b.WriteString("\n")
 	}
 
+	b.WriteString("Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_seconds` histogram, whose buckets double in width (…, 25, 50, 100 µs, …), so they are accurate to the bucket, not to the microsecond. Negative added latency means run-to-run noise on the shared laptop exceeded the gateway's cost at that rate.\n\n")
 	b.WriteString("**All levels** (median run)\n\n| Target | Rate | p50 (ms) | p99 (ms) | Errors | Achieved req/s | GW CPU (cores) | GW overhead p50 / p99 (µs, from /metrics) | Result |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, t := range s.Targets {
 		for _, l := range t.Levels {
