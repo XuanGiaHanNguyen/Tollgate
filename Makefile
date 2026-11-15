@@ -55,3 +55,4 @@ fuzz-smoke:
 	go test ./internal/rules/parser -run '^$$' -fuzz FuzzParser -fuzztime $(FUZZ_TIME)
 	go test ./internal/rules -run '^$$' -fuzz FuzzVMBudget -fuzztime $(FUZZ_TIME)
 	go test ./internal/rules -run '^$$' -fuzz FuzzDifferential -fuzztime $(FUZZ_TIME)
+	go test ./internal/ai/filter -run '^$$' -fuzz FuzzSplitPatterns -fuzztime $(FUZZ_TIME)
