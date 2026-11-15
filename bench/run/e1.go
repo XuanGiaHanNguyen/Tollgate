@@ -163,7 +163,7 @@ func e1Once(c *cluster, urls []string, rate int) (e1Run, any, error) {
 	}
 	done := make(chan k6Result, 1)
 	go func() {
-		s, raw, err := runK6("bench/k6/e1.js", map[string]string{
+		s, raw, err := runK6("bench/k6/e1.js", *warmup+*measure, map[string]string{
 			"TARGETS":  strings.Join(urls, ","),
 			"RATE":     strconv.Itoa(rate),
 			"DURATION": secs(*measure) + "s",

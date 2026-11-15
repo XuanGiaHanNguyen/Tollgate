@@ -81,3 +81,13 @@ Not benchmark results for `METRICS.md` (those come from `bench/` in M2), just ch
 
 ### CI
 GitHub Actions: gofmt check, `go vet`, `staticcheck`, `go test -race` with coverage report, build all binaries, `docker build` for each image.
+
+## M2: decisions log
+
+- **Go 1.26.** `prometheus/client_golang` v1.25 requires Go 1.26, so the module and Dockerfile moved from 1.25 to 1.26 (the spec asks for latest stable).
+- **Metrics cost.** Pre-resolved handles keep label hashing off the hot path; with metrics on, `ServeHTTP` goes from 114 to 116–117 allocs/op and no measurable ns/op change (`BenchmarkGatewayServeHTTP*`).
+- **E7 breaker settings.** With the default `error_rate: 0.5`, a backend failing exactly 50% of requests hovers around the threshold and may never trip. E7 uses `window: 5s, error_rate: 0.3, min_requests: 20, cooldown: 2s, half_open_probes: 3`; these are recorded in the result file. Expected time to open ≈ 0.3/0.5 × 5 s = 3 s, because the window still holds pre-failure successes.
+- **E7 failures are fast 500s.** The mock answers injected errors immediately, and 500 is not retried (only 502/503/504 and connection errors are). So the breaker mostly changes the **error rate** clients see; any p99 change is secondary. Both are reported.
+- **E7 failure injection runs inside k6** (one-shot scenarios at fixed offsets), so the phase boundaries in k6's tagged metrics match the moment the backend changes. The runner timestamps the change by polling the backend, and timestamps breaker transitions by polling `/admin/upstreams` (10 ms resolution).
+- **Laptop noise.** The dev laptop runs other apps (load average 3–6 before benchmarks). Repeated identical runs at 1000 req/s through one gateway gave client p99 of 2.8, 13 and 37 ms, while the gateway's own overhead stayed ≤ 1.6 ms for every request and k6 dropped iterations, so the tail comes from scheduling on a shared machine, not the gateway. The E1 pass limit (p99 < 10 ms) was chosen in the plan before any data and was not changed. Instead, a 500 req/s level was added and every result now records the load average at start. AWS runs (M8) are the clean numbers.
+- **CI.** gofmt, vet, staticcheck v0.8.2, race tests with a coverage summary, binary build, and `docker build` per image. The first run on GitHub passed, which is the first check that the Dockerfile builds.

@@ -39,6 +39,7 @@ type Env struct {
 	NodeCount int     `json:"node_count"`
 	Topology  string  `json:"topology"`                       // how processes were run, e.g. "local processes"
 	LoadAvg1m string  `json:"load_avg_1m_at_start,omitempty"` // other load on the machine when the run started
+	Power     string  `json:"power,omitempty"`                // "AC" or "battery" (laptops can throttle on battery)
 	Note      string  `json:"note,omitempty"`
 }
 
@@ -67,6 +68,11 @@ func CaptureEnv() Env {
 	case "darwin":
 		e.Machine = cmdOut("sysctl", "-n", "hw.model")
 		e.CPU = cmdOut("sysctl", "-n", "machdep.cpu.brand_string")
+		if b := cmdOut("pmset", "-g", "batt"); strings.Contains(b, "AC Power") {
+			e.Power = "AC"
+		} else if strings.Contains(b, "Battery Power") {
+			e.Power = "battery"
+		}
 		if f := strings.Fields(strings.Trim(cmdOut("sysctl", "-n", "vm.loadavg"), "{} ")); len(f) > 0 {
 			e.LoadAvg1m = f[0]
 		}

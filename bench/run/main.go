@@ -250,7 +250,21 @@ func waitOK(url string) error {
 
 // ---------- k6 ----------
 
-func runK6(script string, env map[string]string) (*benchfmt.K6Summary, json.RawMessage, error) {
+// sleepSlack is how much longer than planned a k6 run may take before the
+// runner assumes the machine slept or stalled and discards the run.
+const sleepSlack = 20 * time.Second
+
+func runK6(script string, expected time.Duration, env map[string]string) (*benchfmt.K6Summary, json.RawMessage, error) {
+	start := time.Now()
+	s, raw, err := runK6Once(script, env)
+	if err == nil && time.Since(start) > expected+sleepSlack {
+		return nil, nil, fmt.Errorf("k6 run took %v, expected about %v: the machine likely slept or stalled, so the run is discarded (keep the lid open, ideally on AC power)",
+			time.Since(start).Round(time.Second), expected)
+	}
+	return s, raw, err
+}
+
+func runK6Once(script string, env map[string]string) (*benchfmt.K6Summary, json.RawMessage, error) {
 	f, err := os.CreateTemp("", "k6-summary-*.json")
 	if err != nil {
 		return nil, nil, err

@@ -154,7 +154,7 @@ func e7Once(c *cluster, failAt, recoverAt, end int) (e7Run, any, error) {
 		}
 	}()
 
-	s, raw, err := runK6("bench/k6/e7.js", map[string]string{
+	s, raw, err := runK6("bench/k6/e7.js", time.Duration(end)*time.Second, map[string]string{
 		"TARGET":       c.gateways[0],
 		"VICTIM_ADMIN": victimURL,
 		"RATE":         strconv.Itoa(*e7Rate),

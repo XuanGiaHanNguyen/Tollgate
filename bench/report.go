@@ -112,6 +112,7 @@ func writeEnv(b *strings.Builder, r *benchfmt.Result) {
 		{"OS / Go / k6", fmt.Sprintf("%s / %s / %s", e.OS, e.GoVersion, orDash(e.K6Version))},
 		{"Topology", fmt.Sprintf("%s; %d gateway node(s) max", e.Topology, e.NodeCount)},
 		{"Load average at start", orDash(e.LoadAvg1m)},
+		{"Power", orDash(e.Power)},
 		{"Measured window × reps", fmt.Sprintf("%vs after %vs warm-up × %v (median reported)", r.Params["measure_seconds"], r.Params["warmup_seconds"], r.Params["reps"])},
 	}
 	if e.Note != "" {
