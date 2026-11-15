@@ -85,12 +85,12 @@ Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_s
 
 | Environment | |
 | --- | --- |
-| Run | 2026-11-15 03:38 → 03:38 (UTC) |
-| Commit | `8eb7652b6846` |
+| Run | 2026-11-15 04:53 → 04:53 (UTC) |
+| Commit | `18b89aaf727e` |
 | Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
 | OS / Go / k6 | darwin/arm64 / go1.26.0 / k6 v2.4.0 |
 | Topology | single process (go test); 1 gateway node(s) max |
-| Load average at start | 15.46 |
+| Load average at start | 12.81 |
 | Power | AC |
 | Repetitions | 3 (median reported) |
 
@@ -100,11 +100,11 @@ Engines agree (differential gate passed): **true**
 
 | Rule set | Statements | Bytecode instrs | VM ns/eval | VM allocs/eval | Interpreter ns/eval | Interpreter allocs/eval | Speedup (interp ÷ VM) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| xs | 2 | 26 | 128.6 | 0 | 115.3 | 0 | 0.90× |
-| s | 10 | 126 | 461.1 | 0 | 466.8 | 0 | 1.01× |
-| m | 50 | 626 | 2112.0 | 0 | 2121.0 | 0 | 1.00× |
-| l | 200 | 2504 | 8103.0 | 0 | 8164.0 | 0 | 1.01× |
-| xl | 1000 | 12504 | 40606.0 | 0 | 39573.0 | 0 | 0.97× |
+| xs | 2 | 16 | 79.8 | 0 | 79.0 | 0 | 0.99× |
+| s | 10 | 56 | 191.4 | 0 | 354.0 | 0 | 1.85× |
+| m | 50 | 256 | 717.3 | 0 | 1716.0 | 0 | 2.39× |
+| l | 200 | 1004 | 2621.0 | 0 | 6553.0 | 0 | 2.50× |
+| xl | 1000 | 5004 | 12621.0 | 0 | 32315.0 | 0 | 2.56× |
 
 ### E7: Does the breaker protect latency?
 
