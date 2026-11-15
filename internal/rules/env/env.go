@@ -6,6 +6,8 @@ package env
 
 import (
 	"errors"
+
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ai/tokens"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -66,17 +68,24 @@ const (
 	FieldRequestMethod
 	FieldRequestPath
 	FieldRequestHost
+	FieldRequestModel
+	FieldRequestMaxTokens // int
+	FieldRequestBody
 	numFields
 )
 
 var fieldNames = map[string]FieldID{
 	"user.id": FieldUserID, "user.tier": FieldUserTier, "client.ip": FieldClientIP,
 	"request.method": FieldRequestMethod, "request.path": FieldRequestPath, "request.host": FieldRequestHost,
+	"request.model": FieldRequestModel, "request.max_tokens": FieldRequestMaxTokens, "request.body": FieldRequestBody,
 }
 
-// LookupField resolves "obj.name". All fields are strings in M3.
+// LookupField resolves "obj.name" and its type.
 func LookupField(obj, name string) (FieldID, Type, bool) {
 	id, ok := fieldNames[obj+"."+name]
+	if id == FieldRequestMaxTokens {
+		return id, Int, ok
+	}
 	return id, String, ok
 }
 
@@ -93,6 +102,9 @@ type Request struct {
 	Host          string
 	Header        http.Header
 	RawQuery      string
+	Model         string // AI routes: parsed from the request body
+	MaxTokens     int64
+	Body          string
 
 	// client IP parsed on first use, so many cidr_match calls in one
 	// evaluation parse it once
@@ -125,8 +137,20 @@ func (r *Request) Field(id FieldID) string {
 		return r.Path
 	case FieldRequestHost:
 		return r.Host
+	case FieldRequestModel:
+		return r.Model
+	case FieldRequestBody:
+		return r.Body
 	}
 	return ""
+}
+
+// FieldValue returns a field as a typed value.
+func (r *Request) FieldValue(id FieldID) Value {
+	if id == FieldRequestMaxTokens {
+		return IntVal(r.MaxTokens)
+	}
+	return StringVal(r.Field(id))
 }
 
 // ---- builtins ----
@@ -138,6 +162,7 @@ const (
 	BuiltinHeader BuiltinID = iota
 	BuiltinQuery
 	BuiltinCIDRMatch
+	BuiltinTokensEstimate
 )
 
 // Builtin describes a built-in's signature.
@@ -149,16 +174,17 @@ type Builtin struct {
 }
 
 var builtins = map[string]Builtin{
-	"header":     {BuiltinHeader, "header", []Type{String}, String},
-	"query":      {BuiltinQuery, "query", []Type{String}, String},
-	"cidr_match": {BuiltinCIDRMatch, "cidr_match", []Type{String, String}, Bool},
+	"header":          {BuiltinHeader, "header", []Type{String}, String},
+	"query":           {BuiltinQuery, "query", []Type{String}, String},
+	"cidr_match":      {BuiltinCIDRMatch, "cidr_match", []Type{String, String}, Bool},
+	"tokens.estimate": {BuiltinTokensEstimate, "tokens.estimate", []Type{String}, Int},
 }
 
 // NumFields is the number of request fields (bytecode verification).
 const NumFields = int(numFields)
 
 // BuiltinArity is the argument count of each built-in, indexed by ID.
-var BuiltinArity = [...]int{BuiltinHeader: 1, BuiltinQuery: 1, BuiltinCIDRMatch: 2}
+var BuiltinArity = [...]int{BuiltinHeader: 1, BuiltinQuery: 1, BuiltinCIDRMatch: 2, BuiltinTokensEstimate: 1}
 
 // LookupBuiltin resolves a built-in by name.
 func LookupBuiltin(name string) (Builtin, bool) {
@@ -179,6 +205,8 @@ func Call(id BuiltinID, args []Value, r *Request) Value {
 		return StringVal(r.Query(args[0].S))
 	case BuiltinCIDRMatch:
 		return BoolVal(r.cidrMatch(args[0].S, args[1].S))
+	case BuiltinTokensEstimate:
+		return IntVal(tokens.Estimate(args[0].S))
 	}
 	return Value{}
 }

@@ -1,0 +1,13 @@
+(route "/v1/chat/*"
+  (require auth)
+  (providers ["provider-a" "provider-b"])
+  (hedge after p95 max 5%)
+  (block_patterns "kid-safety" action redact)
+  (budget#0 5.000000 usd per day by user.id)
+  (when (&& (== request.model "large") (> request.max_tokens 1000))
+    (budget#1 1.500000 usd per hour by user.id)
+  )
+  (when (> (call tokens.estimate request.body) 4000)
+    (deny 413)
+  )
+)

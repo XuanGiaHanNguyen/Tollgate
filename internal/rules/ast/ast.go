@@ -157,6 +157,35 @@ type Limit struct {
 // AlgoNames maps Limit.Algo to its source spelling.
 var AlgoNames = [...]string{"token_bucket", "sliding_window"}
 
+// Budget limits spending: Amount micro-USD per Unit for each Key value.
+type Budget struct {
+	Pos    Pos
+	ID     int
+	Amount int64 // micro-USD
+	Unit   Unit
+	Key    Expr
+}
+
+// Providers lists upstreams to call for an AI route, in order.
+type Providers struct {
+	Pos   Pos
+	Names []string
+}
+
+// Hedge sends a backup request when the primary is late.
+type Hedge struct {
+	Pos      Pos
+	Quantile float64 // e.g. 0.95 for "after p95"
+	MaxPct   float64 // hedge budget, percent of requests
+}
+
+// BlockPatterns filters streamed output with a named pattern set.
+type BlockPatterns struct {
+	Pos    Pos
+	Set    string
+	Action string // redact, block or flag
+}
+
 // Deny ends evaluation with an HTTP status.
 type Deny struct {
 	Pos    Pos
@@ -170,11 +199,20 @@ type SetHeader struct {
 	Value Expr
 }
 
-func (*RequireAuth) stmtNode() {}
-func (*When) stmtNode()        {}
-func (*Limit) stmtNode()       {}
-func (*Deny) stmtNode()        {}
-func (*SetHeader) stmtNode()   {}
+func (*RequireAuth) stmtNode()   {}
+func (*When) stmtNode()          {}
+func (*Limit) stmtNode()         {}
+func (*Deny) stmtNode()          {}
+func (*SetHeader) stmtNode()     {}
+func (*Budget) stmtNode()        {}
+func (*Providers) stmtNode()     {}
+func (*Hedge) stmtNode()         {}
+func (*BlockPatterns) stmtNode() {}
+
+func (s *Budget) At() Pos        { return s.Pos }
+func (s *Providers) At() Pos     { return s.Pos }
+func (s *Hedge) At() Pos         { return s.Pos }
+func (s *BlockPatterns) At() Pos { return s.Pos }
 
 func (s *RequireAuth) At() Pos { return s.Pos }
 func (s *When) At() Pos        { return s.Pos }
@@ -314,6 +352,14 @@ func formatStmts(b *strings.Builder, ss []Stmt, depth int) {
 			fmt.Fprintf(b, "%s(deny %d)\n", ind, s.Status)
 		case *SetHeader:
 			fmt.Fprintf(b, "%s(set_header %q %s)\n", ind, s.Name, FormatExpr(s.Value))
+		case *Budget:
+			fmt.Fprintf(b, "%s(budget#%d %d.%06d usd per %s by %s)\n", ind, s.ID, s.Amount/1e6, s.Amount%1e6, s.Unit, FormatExpr(s.Key))
+		case *Providers:
+			fmt.Fprintf(b, "%s(providers %q)\n", ind, s.Names)
+		case *Hedge:
+			fmt.Fprintf(b, "%s(hedge after p%g max %g%%)\n", ind, s.Quantile*100, s.MaxPct)
+		case *BlockPatterns:
+			fmt.Fprintf(b, "%s(block_patterns %q action %s)\n", ind, s.Set, s.Action)
 		}
 	}
 }

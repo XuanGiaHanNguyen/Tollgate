@@ -6,6 +6,7 @@ package parser
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/ast"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/lexer"
@@ -16,11 +17,12 @@ import (
 const maxDepth = 200
 
 type parser struct {
-	toks    []lexer.Token
-	pos     int
-	diags   []ast.Diagnostic
-	limitID int
-	depth   int
+	toks     []lexer.Token
+	pos      int
+	diags    []ast.Diagnostic
+	limitID  int
+	budgetID int
+	depth    int
 }
 
 // bailout unwinds the parser after a nesting-depth error.
@@ -115,7 +117,8 @@ func (p *parser) leave() { p.depth-- }
 
 func isStmtStart(k lexer.Kind) bool {
 	switch k {
-	case lexer.Require, lexer.When, lexer.Limit, lexer.Deny, lexer.SetHeader:
+	case lexer.Require, lexer.When, lexer.Limit, lexer.Deny, lexer.SetHeader,
+		lexer.Budget, lexer.Providers, lexer.Hedge, lexer.BlockPatterns:
 		return true
 	}
 	return false
@@ -313,6 +316,25 @@ func (p *parser) parseStmt() ast.Stmt {
 		status, _ := strconv.ParseInt(n.Text, 10, 64)
 		return &ast.Deny{Pos: t.Pos, Status: status}
 
+	case lexer.Budget:
+		return p.parseBudget(t)
+	case lexer.Providers:
+		return p.parseProviders(t)
+	case lexer.Hedge:
+		return p.parseHedge(t)
+	case lexer.BlockPatterns:
+		set, ok := p.expect(lexer.String, "pattern set name")
+		if !ok || !p.expectWord("action") {
+			p.syncStmt()
+			return nil
+		}
+		a, ok := p.expect(lexer.Ident, "action (redact, block or flag)")
+		if !ok {
+			p.syncStmt()
+			return nil
+		}
+		return &ast.BlockPatterns{Pos: t.Pos, Set: set.Text, Action: a.Text}
+
 	case lexer.SetHeader:
 		name, ok := p.expect(lexer.String, "header name string")
 		if !ok {
@@ -327,6 +349,137 @@ func (p *parser) parseStmt() ast.Stmt {
 		return &ast.SetHeader{Pos: t.Pos, Name: name.Text, Value: val}
 	}
 	return nil
+}
+
+// expectWord consumes an identifier with the given text (contextual
+// keywords like "usd", "after", "max", "action").
+func (p *parser) expectWord(w string) bool {
+	t := p.cur()
+	if t.Kind == lexer.Ident && t.Text == w {
+		p.advance()
+		return true
+	}
+	if t.Kind != lexer.Illegal {
+		p.errorf(t.Pos, "expected '%s', found %s", w, describe(t))
+	}
+	return false
+}
+
+// number parses an INT or FLOAT token as a decimal with up to 6 fraction
+// digits, returned in millionths (so USD amounts become micro-USD exactly).
+func (p *parser) number(what string) (int64, ast.Pos, bool) {
+	t := p.cur()
+	if t.Kind != lexer.Int && t.Kind != lexer.Float {
+		if t.Kind != lexer.Illegal {
+			p.errorf(t.Pos, "expected %s, found %s", what, describe(t))
+		}
+		return 0, t.Pos, false
+	}
+	p.advance()
+	whole, frac, _ := strings.Cut(t.Text, ".")
+	if len(frac) > 6 {
+		p.errorf(t.Pos, "%s has more than 6 decimal places", t.Text)
+		return 0, t.Pos, false
+	}
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || w > 9_000_000_000 {
+		p.errorf(t.Pos, "%s is out of range", t.Text)
+		return 0, t.Pos, false
+	}
+	f, _ := strconv.ParseInt((frac + "000000")[:6], 10, 64)
+	return w*1_000_000 + f, t.Pos, true
+}
+
+func (p *parser) parseBudget(t lexer.Token) ast.Stmt {
+	amount, _, ok := p.number("USD amount after 'budget'")
+	if !ok || !p.expectWord("usd") {
+		p.syncStmt()
+		return nil
+	}
+	if _, ok := p.expect(lexer.Per, "'per'"); !ok {
+		p.syncStmt()
+		return nil
+	}
+	u, ok := p.expect(lexer.Ident, "time unit (second, minute, hour, day)")
+	if !ok {
+		p.syncStmt()
+		return nil
+	}
+	unit, ok := ast.UnitByName(u.Text)
+	if !ok {
+		p.errorf(u.Pos, "unknown time unit %q (want second, minute, hour or day)", u.Text)
+		p.syncStmt()
+		return nil
+	}
+	if _, ok := p.expect(lexer.By, "'by'"); !ok {
+		p.syncStmt()
+		return nil
+	}
+	key := p.parseExpr()
+	if key == nil {
+		p.syncStmt()
+		return nil
+	}
+	id := p.budgetID
+	p.budgetID++
+	return &ast.Budget{Pos: t.Pos, ID: id, Amount: amount, Unit: unit, Key: key}
+}
+
+func (p *parser) parseProviders(t lexer.Token) ast.Stmt {
+	if _, ok := p.expect(lexer.LBracket, "'['"); !ok {
+		p.syncStmt()
+		return nil
+	}
+	st := &ast.Providers{Pos: t.Pos}
+	for {
+		s, ok := p.expect(lexer.String, "provider name string")
+		if !ok {
+			p.syncStmt()
+			return nil
+		}
+		st.Names = append(st.Names, s.Text)
+		if p.cur().Kind == lexer.Comma {
+			p.advance()
+			continue
+		}
+		if _, ok := p.expect(lexer.RBracket, "',' or ']'"); !ok {
+			p.syncStmt()
+			return nil
+		}
+		return st
+	}
+}
+
+func (p *parser) parseHedge(t lexer.Token) ast.Stmt {
+	if !p.expectWord("after") {
+		p.syncStmt()
+		return nil
+	}
+	q, ok := p.expect(lexer.Ident, "quantile like p95")
+	if !ok {
+		p.syncStmt()
+		return nil
+	}
+	qv, err := strconv.ParseFloat(strings.TrimPrefix(q.Text, "p"), 64)
+	if !strings.HasPrefix(q.Text, "p") || err != nil || qv <= 0 || qv >= 100 {
+		p.errorf(q.Pos, "expected a quantile like p95, found %q", q.Text)
+		p.syncStmt()
+		return nil
+	}
+	if !p.expectWord("max") {
+		p.syncStmt()
+		return nil
+	}
+	pct, _, ok := p.number("hedge budget percentage")
+	if !ok {
+		p.syncStmt()
+		return nil
+	}
+	if _, ok := p.expect(lexer.Percent, "'%'"); !ok {
+		p.syncStmt()
+		return nil
+	}
+	return &ast.Hedge{Pos: t.Pos, Quantile: qv / 100, MaxPct: float64(pct) / 1e6}
 }
 
 // ---- expressions (Pratt) ----
@@ -431,35 +584,50 @@ func (p *parser) parsePrimary() ast.Expr {
 			if !ok {
 				return nil
 			}
+			if p.cur().Kind == lexer.LParen { // namespaced built-in: tokens.estimate(...)
+				return p.parseCall(t, t.Text+"."+name.Text)
+			}
 			return &ast.Field{Pos: t.Pos, Obj: t.Text, Name: name.Text, ID: -1} // resolved by types
 		case lexer.LParen:
-			p.advance()
-			call := &ast.Call{Pos: t.Pos, Fn: t.Text, Builtin: -1} // resolved by types
-			if p.cur().Kind == lexer.RParen {
-				p.advance()
-				return call
-			}
-			for {
-				a := p.parseExpr()
-				if a == nil {
-					return nil
-				}
-				call.Args = append(call.Args, a)
-				if p.cur().Kind == lexer.Comma {
-					p.advance()
-					continue
-				}
-				if _, ok := p.expect(lexer.RParen, "',' or ')' in call"); !ok {
-					return nil
-				}
-				return call
-			}
+			return p.parseCall(t, t.Text)
+		}
+		if t.Text == "body" { // predeclared: the request body
+			return &ast.Field{Pos: t.Pos, Obj: "request", Name: "body", ID: -1}
 		}
 		return &ast.Ident{Pos: t.Pos, Name: t.Text}
+	case lexer.Float:
+		p.advance()
+		p.errorf(t.Pos, "decimal numbers are only allowed in budget and hedge amounts")
+		return nil
 	case lexer.Illegal:
 		p.advance()
 		return nil
 	}
 	p.errorf(t.Pos, "expected an expression, found %s", describe(t))
 	return nil
+}
+
+// parseCall parses "(args)" after a function name; the current token is "(".
+func (p *parser) parseCall(t lexer.Token, fn string) ast.Expr {
+	p.advance()
+	call := &ast.Call{Pos: t.Pos, Fn: fn, Builtin: -1} // resolved by types
+	if p.cur().Kind == lexer.RParen {
+		p.advance()
+		return call
+	}
+	for {
+		a := p.parseExpr()
+		if a == nil {
+			return nil
+		}
+		call.Args = append(call.Args, a)
+		if p.cur().Kind == lexer.Comma {
+			p.advance()
+			continue
+		}
+		if _, ok := p.expect(lexer.RParen, "',' or ')' in call"); !ok {
+			return nil
+		}
+		return call
+	}
 }

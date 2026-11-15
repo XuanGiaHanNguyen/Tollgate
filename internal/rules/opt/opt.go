@@ -71,6 +71,10 @@ func (o *optimizer) block(ss []ast.Stmt) ([]ast.Stmt, bool) {
 			out = append(out, &ast.Limit{Pos: s.Pos, ID: s.ID, Count: s.Count, Unit: s.Unit, Key: o.expr(s.Key), Algo: s.Algo})
 		case *ast.SetHeader:
 			out = append(out, &ast.SetHeader{Pos: s.Pos, Name: s.Name, Value: o.expr(s.Value)})
+		case *ast.Budget:
+			out = append(out, &ast.Budget{Pos: s.Pos, ID: s.ID, Amount: s.Amount, Unit: s.Unit, Key: o.expr(s.Key)})
+		case *ast.Providers, *ast.Hedge, *ast.BlockPatterns:
+			out = append(out, s) // route settings, read from the source AST
 		case *ast.Deny:
 			out = append(out, &ast.Deny{Pos: s.Pos, Status: s.Status})
 			return out, true // everything after is unreachable

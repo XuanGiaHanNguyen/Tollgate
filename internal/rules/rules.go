@@ -39,6 +39,31 @@ type Route struct {
 	Optimized *ast.Route      // what both engines run
 	Chunk     *compiler.Chunk // bytecode for the VM
 	lets      interp.Lets     // for evaluating Source
+	AI        AISettings      // providers, hedging, safety filter
+}
+
+// AISettings are a route's static AI settings (top-level statements).
+type AISettings struct {
+	Providers     []string // upstream names, in order; empty = the route's upstream
+	HedgeQuantile float64  // 0 = no hedging; e.g. 0.95
+	HedgeMaxPct   float64
+	PatternSet    string // "" = no safety filter
+	PatternAction string // redact, block, flag
+}
+
+func aiSettings(r *ast.Route) AISettings {
+	var s AISettings
+	for _, st := range r.Body {
+		switch st := st.(type) {
+		case *ast.Providers:
+			s.Providers = st.Names
+		case *ast.Hedge:
+			s.HedgeQuantile, s.HedgeMaxPct = st.Quantile, st.MaxPct
+		case *ast.BlockPatterns:
+			s.PatternSet, s.PatternAction = st.Set, st.Action
+		}
+	}
+	return s
 }
 
 // CompileError carries every error diagnostic (and any warnings).
@@ -87,6 +112,7 @@ func Compile(src string, o Options) (*RuleSet, error) {
 		pat, _ := analysis.ParsePattern(or.Pattern)
 		rs.Routes = append(rs.Routes, &Route{
 			Pattern: or.Pattern, pat: pat, Source: srcRoutes[i], Optimized: or, Chunk: ch, lets: lets,
+			AI: aiSettings(srcRoutes[i]),
 		})
 	}
 	if ast.HasErrors(diags) {
