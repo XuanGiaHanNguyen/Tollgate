@@ -103,6 +103,14 @@ func (e *evaluator) expr(x ast.Expr) env.Value {
 	case *ast.Field:
 		return env.StringVal(e.r.Field(env.FieldID(x.ID)))
 	case *ast.Call:
+		if x.ConstPrefix {
+			ip := e.expr(x.Args[0])
+			e.step() // the constant prefix node
+			if e.done {
+				return env.Value{}
+			}
+			return env.BoolVal(e.r.CIDRMatchPrefix(ip.S, x.Prefix, x.PrefixOK))
+		}
 		var buf [2]env.Value
 		args := buf[:0]
 		for _, a := range x.Args {

@@ -9,6 +9,8 @@
 package opt
 
 import (
+	"net/netip"
+
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/ast"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/env"
 )
@@ -100,7 +102,15 @@ func (o *optimizer) expr(e ast.Expr) ast.Expr {
 				args[0] = &ast.StringLit{Pos: s.Pos, Value: env.CanonicalHeaderArg(s.Value)}
 			}
 		}
-		return &ast.Call{Pos: e.Pos, Fn: e.Fn, Args: args, Builtin: e.Builtin}
+		call := &ast.Call{Pos: e.Pos, Fn: e.Fn, Args: args, Builtin: e.Builtin}
+		// cidr_match(ip, "10.0.0.0/8"): parse the constant prefix once.
+		if e.Fn == "cidr_match" && len(args) == 2 {
+			if s, ok := args[1].(*ast.StringLit); ok {
+				p, err := netip.ParsePrefix(s.Value)
+				call.ConstPrefix, call.PrefixOK, call.Prefix = true, err == nil, p
+			}
+		}
+		return call
 	case *ast.Unary:
 		x := o.expr(e.X)
 		switch e.Op {

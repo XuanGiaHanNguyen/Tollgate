@@ -46,11 +46,15 @@ func TestForwardJumpsOnly(t *testing.T) {
 	for _, r := range o.Routes() {
 		ch, _ := Compile(r)
 		for i, in := range ch.Code {
-			switch in.Op {
-			case OpJump, OpJumpIfFalse, OpAnd, OpOr:
-				if int(in.Arg) <= i {
-					t.Fatalf("backward jump at %d", i)
-				}
+			target := -1
+			switch {
+			case in.Op.IsFusedJump():
+				target = int(in.C)
+			case in.Op == OpJump || in.Op == OpJumpIfFalse || in.Op == OpJumpIfTrue || in.Op == OpAnd || in.Op == OpOr:
+				target = int(in.A)
+			}
+			if target != -1 && target <= i {
+				t.Fatalf("backward jump at %d", i)
 			}
 		}
 	}

@@ -4,6 +4,7 @@ package ast
 
 import (
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -236,6 +237,11 @@ type (
 		Fn      string
 		Args    []Expr
 		Builtin int
+		// For cidr_match with a constant prefix, the optimizer parses it
+		// once: ConstPrefix is set and PrefixOK reports whether it parsed.
+		ConstPrefix bool
+		PrefixOK    bool
+		Prefix      netip.Prefix
 	}
 	Unary struct {
 		Pos Pos

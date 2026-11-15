@@ -99,7 +99,16 @@ type Request struct {
 	ipParsed bool
 	ipOK     bool
 	ip       netip.Addr
+
+	// query split on first use into up to maxQueryPairs raw pairs (no
+	// allocation); longer queries fall back to scanning RawQuery
+	qParsed   bool
+	qOverflow bool
+	qN        int
+	qPairs    [maxQueryPairs][2]string
 }
+
+const maxQueryPairs = 16
 
 // Field returns a request field.
 func (r *Request) Field(id FieldID) string {
@@ -145,6 +154,12 @@ var builtins = map[string]Builtin{
 	"cidr_match": {BuiltinCIDRMatch, "cidr_match", []Type{String, String}, Bool},
 }
 
+// NumFields is the number of request fields (bytecode verification).
+const NumFields = int(numFields)
+
+// BuiltinArity is the argument count of each built-in, indexed by ID.
+var BuiltinArity = [...]int{BuiltinHeader: 1, BuiltinQuery: 1, BuiltinCIDRMatch: 2}
+
 // LookupBuiltin resolves a built-in by name.
 func LookupBuiltin(name string) (Builtin, bool) {
 	b, ok := builtins[name]
@@ -159,20 +174,62 @@ func CanonicalHeaderArg(s string) string { return http.CanonicalHeaderKey(s) }
 func Call(id BuiltinID, args []Value, r *Request) Value {
 	switch id {
 	case BuiltinHeader:
-		return StringVal(header(r.Header, args[0].S))
+		return StringVal(Header(r.Header, args[0].S))
 	case BuiltinQuery:
-		return StringVal(queryValue(r.RawQuery, args[0].S))
+		return StringVal(r.Query(args[0].S))
 	case BuiltinCIDRMatch:
 		return BoolVal(r.cidrMatch(args[0].S, args[1].S))
 	}
 	return Value{}
 }
 
-func header(h http.Header, key string) string {
+// Header returns the first value of a request header. A key canonicalized at
+// compile time hits the map directly with no allocation.
+func Header(h http.Header, key string) string {
 	if v := h[key]; len(v) > 0 { // fast path: key already canonical
 		return v[0]
 	}
 	return h.Get(key)
+}
+
+// Query returns the first value of a query parameter.
+func (r *Request) Query(key string) string {
+	if !r.qParsed {
+		r.qParsed = true
+		raw := r.RawQuery
+		for raw != "" {
+			if r.qN == maxQueryPairs {
+				r.qOverflow = true
+				break
+			}
+			var pair string
+			pair, raw, _ = strings.Cut(raw, "&")
+			k, v, _ := strings.Cut(pair, "=")
+			r.qPairs[r.qN] = [2]string{k, v}
+			r.qN++
+		}
+	}
+	if r.qOverflow {
+		return queryValue(r.RawQuery, key)
+	}
+	for i := 0; i < r.qN; i++ {
+		k, v := r.qPairs[i][0], r.qPairs[i][1]
+		if strings.ContainsAny(k, "%+") {
+			if uk, err := url.QueryUnescape(k); err == nil {
+				k = uk
+			}
+		}
+		if k != key {
+			continue
+		}
+		if strings.ContainsAny(v, "%+") {
+			if uv, err := url.QueryUnescape(v); err == nil {
+				return uv
+			}
+		}
+		return v
+	}
+	return ""
 }
 
 // queryValue finds the first value of key without allocating unless the
@@ -201,6 +258,16 @@ func queryValue(raw, key string) string {
 }
 
 func (r *Request) cidrMatch(ip, cidr string) bool {
+	pfx, err := netip.ParsePrefix(cidr)
+	return r.CIDRMatchPrefix(ip, pfx, err == nil)
+}
+
+// CIDRMatchPrefix is cidr_match with an already-parsed prefix (ok=false
+// means the constant prefix was invalid, which never matches).
+func (r *Request) CIDRMatchPrefix(ip string, pfx netip.Prefix, ok bool) bool {
+	if !ok {
+		return false
+	}
 	var addr netip.Addr
 	if ip == r.ClientIP {
 		if !r.ipParsed {
@@ -217,10 +284,6 @@ func (r *Request) cidrMatch(ip, cidr string) bool {
 			return false
 		}
 		addr = a
-	}
-	pfx, err := netip.ParsePrefix(cidr)
-	if err != nil {
-		return false
 	}
 	return pfx.Contains(addr.Unmap())
 }

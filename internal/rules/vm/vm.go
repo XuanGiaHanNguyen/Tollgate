@@ -2,6 +2,12 @@
 // stack is a fixed-size array on the Go stack and values are plain structs,
 // so a run allocates nothing. Every run has an instruction budget so a bad
 // rule cannot hang a gateway.
+//
+// Validate is a bytecode verifier (in the spirit of the JVM's): it proves
+// operand ranges, forward-only jumps and the exact stack depth at every
+// instruction. Run relies on that proof and does no per-instruction stack or
+// operand checks; a recover() turns any panic on unverified code into
+// ErrBadBytecode instead of crashing the gateway.
 package vm
 
 import (
@@ -12,213 +18,304 @@ import (
 // DefaultBudget is the per-evaluation instruction budget.
 const DefaultBudget = 10_000
 
-// Validate checks that bytecode is well-formed: operands in range and jumps
-// forward and inside the code. The compiler only emits valid code; Validate
-// guards the VM against anything else (e.g. corrupted config from a peer).
+// Validate verifies a chunk. Code the compiler produces always passes; the
+// check guards against anything else (e.g. corrupted config from a peer).
 func Validate(ch *compiler.Chunk) error {
-	n := int32(len(ch.Code))
+	n := len(ch.Code)
 	if n == 0 || ch.Code[n-1].Op != compiler.OpReturn || ch.MaxStack > compiler.MaxStack {
 		return env.ErrBadBytecode
 	}
-	for i, in := range ch.Code {
+	isStr := func(i int32) bool { return i >= 0 && int(i) < len(ch.Consts) && ch.Consts[i].T == env.String }
+	isConst := func(i int32) bool { return i >= 0 && int(i) < len(ch.Consts) }
+	isField := func(i int32) bool { return i >= 0 && int(i) < env.NumFields }
+	isPrefix := func(i int32) bool { return i >= 0 && int(i) < len(ch.Prefixes) }
+
+	// depth[pc] is the proven stack depth before pc; -1 = not reached yet.
+	depth := make([]int, n)
+	for i := range depth {
+		depth[i] = -1
+	}
+	depth[0] = 0
+	flow := func(target, d int) bool { // propagate d to target
+		if target < 0 || target >= n || d < 0 || d > compiler.MaxStack {
+			return false
+		}
+		if depth[target] == -1 {
+			depth[target] = d
+		}
+		return depth[target] == d // merge points must agree
+	}
+
+	for pc := 0; pc < n; pc++ {
+		d := depth[pc]
+		if d == -1 {
+			continue // unreachable
+		}
+		in := ch.Code[pc]
+		jumpOK := func(t int32) bool { return int(t) > pc } // forward only
+		need, delta, target, targetDelta, falls := 0, 0, -1, 0, true
+
 		switch in.Op {
-		case compiler.OpPushConst, compiler.OpSetHeader:
-			if in.Arg < 0 || int(in.Arg) >= len(ch.Consts) {
+		case compiler.OpPushConst:
+			if !isConst(in.A) {
 				return env.ErrBadBytecode
 			}
-			if in.Op == compiler.OpSetHeader && ch.Consts[in.Arg].T != env.String {
+			delta = 1
+		case compiler.OpLoadField:
+			if !isField(in.A) {
 				return env.ErrBadBytecode
 			}
+			delta = 1
+		case compiler.OpCallBuiltin:
+			if in.A < 0 || int(in.A) >= len(env.BuiltinArity) {
+				return env.ErrBadBytecode
+			}
+			need = env.BuiltinArity[in.A]
+			delta = 1 - need
+		case compiler.OpEq, compiler.OpNe, compiler.OpLt, compiler.OpLe, compiler.OpGt, compiler.OpGe,
+			compiler.OpAdd, compiler.OpSub, compiler.OpMul, compiler.OpDiv:
+			need, delta = 2, -1
+		case compiler.OpNeg, compiler.OpNot:
+			need = 1
+		case compiler.OpAnd, compiler.OpOr:
+			if !jumpOK(in.A) {
+				return env.ErrBadBytecode
+			}
+			need, delta, target, targetDelta = 1, -1, int(in.A), 0
+		case compiler.OpJump:
+			if !jumpOK(in.A) {
+				return env.ErrBadBytecode
+			}
+			target, falls = int(in.A), false
+		case compiler.OpJumpIfFalse, compiler.OpJumpIfTrue:
+			if !jumpOK(in.A) {
+				return env.ErrBadBytecode
+			}
+			need, delta, target, targetDelta = 1, -1, int(in.A), -1
+		case compiler.OpFieldEqConst, compiler.OpFieldNeConst:
+			if !isField(in.A) || !isStr(in.B) {
+				return env.ErrBadBytecode
+			}
+			delta = 1
+		case compiler.OpHeaderEqConst, compiler.OpHeaderNeConst:
+			if !isStr(in.A) || !isStr(in.B) {
+				return env.ErrBadBytecode
+			}
+			delta = 1
+		case compiler.OpCIDRField:
+			if !isField(in.A) || !isPrefix(in.B) {
+				return env.ErrBadBytecode
+			}
+			delta = 1
+		case compiler.OpJumpIfFieldEq, compiler.OpJumpIfFieldNe:
+			if !isField(in.A) || !isStr(in.B) || !jumpOK(in.C) {
+				return env.ErrBadBytecode
+			}
+			target = int(in.C)
+		case compiler.OpJumpIfHeaderEq, compiler.OpJumpIfHeaderNe:
+			if !isStr(in.A) || !isStr(in.B) || !jumpOK(in.C) {
+				return env.ErrBadBytecode
+			}
+			target = int(in.C)
+		case compiler.OpJumpIfCIDR, compiler.OpJumpIfNotCIDR:
+			if !isField(in.A) || !isPrefix(in.B) || !jumpOK(in.C) {
+				return env.ErrBadBytecode
+			}
+			target = int(in.C)
+		case compiler.OpRequireAuth:
 		case compiler.OpLimit:
-			if in.Arg < 0 || int(in.Arg) >= len(ch.Limits) {
+			if in.A < 0 || int(in.A) >= len(ch.Limits) {
 				return env.ErrBadBytecode
 			}
-		case compiler.OpAnd, compiler.OpOr, compiler.OpJump, compiler.OpJumpIfFalse:
-			if in.Arg <= int32(i) || in.Arg >= n {
+			need, delta = 1, -1
+		case compiler.OpSetHeader:
+			if !isStr(in.A) {
 				return env.ErrBadBytecode
 			}
-		case compiler.OpLoadField, compiler.OpCallBuiltin:
-			if in.Arg < 0 || in.Arg > 255 {
-				return env.ErrBadBytecode
-			}
+			need, delta = 1, -1
+		case compiler.OpDeny, compiler.OpReturn:
+			falls = false
 		default:
-			if in.Op >= compiler.Op(len(opValid)) || !opValid[in.Op] {
-				return env.ErrBadBytecode
-			}
+			return env.ErrBadBytecode
+		}
+		if d < need {
+			return env.ErrBadBytecode
+		}
+		if target >= 0 && !flow(target, d+targetDelta) {
+			return env.ErrBadBytecode
+		}
+		if falls && !flow(pc+1, d+delta) {
+			return env.ErrBadBytecode
 		}
 	}
 	return nil
 }
 
-var opValid = func() []bool {
-	v := make([]bool, 64)
-	for op := compiler.OpPushConst; op <= compiler.OpReturn; op++ {
-		v[op] = true
-	}
-	return v
-}()
-
-// builtinArity must match env's built-in table.
-var builtinArity = [...]int{env.BuiltinHeader: 1, env.BuiltinQuery: 1, env.BuiltinCIDRMatch: 2}
-
-// Run evaluates ch against r and writes the outcome into d (reset first).
-// budget <= 0 means DefaultBudget.
+// Run evaluates a validated chunk against r and writes the outcome into d
+// (reset first). budget <= 0 means DefaultBudget.
 func Run(ch *compiler.Chunk, r *env.Request, budget int, d *env.Decision) {
 	*d = env.Decision{}
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
+	defer func() {
+		if recover() != nil { // only reachable with unverified bytecode
+			d.Err = env.ErrBadBytecode
+		}
+	}()
+
 	var stack [compiler.MaxStack]env.Value
-	sp := 0 // next free slot
-	code := ch.Code
+	sp := 0
+	code, consts := ch.Code, ch.Consts
 	steps := 0
 
-	for pc := 0; pc < len(code); {
-		if steps >= budget {
-			d.Err = env.ErrBudget
-			d.Steps = steps
+	for pc := 0; ; {
+		if steps == budget {
+			d.Err, d.Steps = env.ErrBudget, steps
 			return
 		}
 		steps++
-		in := code[pc]
+		in := &code[pc]
 		pc++
 		switch in.Op {
-		case compiler.OpPushConst:
-			if sp == len(stack) {
-				d.Err = env.ErrStack
-				break
+		case compiler.OpJumpIfFieldEq:
+			if r.Field(env.FieldID(in.A)) == consts[in.B].S {
+				pc = int(in.C)
 			}
-			stack[sp] = ch.Consts[in.Arg]
+		case compiler.OpJumpIfFieldNe:
+			if r.Field(env.FieldID(in.A)) != consts[in.B].S {
+				pc = int(in.C)
+			}
+		case compiler.OpJumpIfHeaderEq:
+			if env.Header(r.Header, consts[in.A].S) == consts[in.B].S {
+				pc = int(in.C)
+			}
+		case compiler.OpJumpIfHeaderNe:
+			if env.Header(r.Header, consts[in.A].S) != consts[in.B].S {
+				pc = int(in.C)
+			}
+		case compiler.OpJumpIfCIDR, compiler.OpJumpIfNotCIDR:
+			p := &ch.Prefixes[in.B]
+			if r.CIDRMatchPrefix(r.Field(env.FieldID(in.A)), p.P, p.OK) == (in.Op == compiler.OpJumpIfCIDR) {
+				pc = int(in.C)
+			}
+		case compiler.OpFieldEqConst:
+			stack[sp] = env.BoolVal(r.Field(env.FieldID(in.A)) == consts[in.B].S)
+			sp++
+		case compiler.OpFieldNeConst:
+			stack[sp] = env.BoolVal(r.Field(env.FieldID(in.A)) != consts[in.B].S)
+			sp++
+		case compiler.OpHeaderEqConst:
+			stack[sp] = env.BoolVal(env.Header(r.Header, consts[in.A].S) == consts[in.B].S)
+			sp++
+		case compiler.OpHeaderNeConst:
+			stack[sp] = env.BoolVal(env.Header(r.Header, consts[in.A].S) != consts[in.B].S)
+			sp++
+		case compiler.OpCIDRField:
+			p := &ch.Prefixes[in.B]
+			stack[sp] = env.BoolVal(r.CIDRMatchPrefix(r.Field(env.FieldID(in.A)), p.P, p.OK))
+			sp++
+		case compiler.OpPushConst:
+			stack[sp] = consts[in.A]
 			sp++
 		case compiler.OpLoadField:
-			if sp == len(stack) {
-				d.Err = env.ErrStack
-				break
-			}
-			stack[sp] = env.StringVal(r.Field(env.FieldID(in.Arg)))
+			stack[sp] = env.StringVal(r.Field(env.FieldID(in.A)))
 			sp++
 		case compiler.OpCallBuiltin:
-			if int(in.Arg) >= len(builtinArity) {
-				d.Err = env.ErrBadBytecode
-				break
-			}
-			n := builtinArity[in.Arg]
-			if sp < n {
-				d.Err = env.ErrBadBytecode
-				break
-			}
-			res := env.Call(env.BuiltinID(in.Arg), stack[sp-n:sp], r)
+			n := env.BuiltinArity[in.A]
+			res := env.Call(env.BuiltinID(in.A), stack[sp-n:sp], r)
 			sp -= n
 			stack[sp] = res
 			sp++
-		case compiler.OpEq, compiler.OpNe, compiler.OpLt, compiler.OpLe, compiler.OpGt, compiler.OpGe,
-			compiler.OpAdd, compiler.OpSub, compiler.OpMul, compiler.OpDiv:
-			if sp < 2 {
-				d.Err = env.ErrBadBytecode
-				break
-			}
-			a, b := stack[sp-2], stack[sp-1]
+		case compiler.OpEq:
 			sp--
-			var v env.Value
-			switch in.Op {
-			case compiler.OpEq:
-				v = env.BoolVal(a.Equal(b))
-			case compiler.OpNe:
-				v = env.BoolVal(!a.Equal(b))
-			case compiler.OpLt:
-				v = env.BoolVal(a.I < b.I)
-			case compiler.OpLe:
-				v = env.BoolVal(a.I <= b.I)
-			case compiler.OpGt:
-				v = env.BoolVal(a.I > b.I)
-			case compiler.OpGe:
-				v = env.BoolVal(a.I >= b.I)
-			case compiler.OpAdd:
-				v = env.IntVal(a.I + b.I)
-			case compiler.OpSub:
-				v = env.IntVal(a.I - b.I)
-			case compiler.OpMul:
-				v = env.IntVal(a.I * b.I)
-			case compiler.OpDiv:
-				if b.I == 0 {
-					d.Err = env.ErrDivZero
-					break
-				}
-				v = env.IntVal(a.I / b.I)
+			stack[sp-1] = env.BoolVal(stack[sp-1].Equal(stack[sp]))
+		case compiler.OpNe:
+			sp--
+			stack[sp-1] = env.BoolVal(!stack[sp-1].Equal(stack[sp]))
+		case compiler.OpLt:
+			sp--
+			stack[sp-1] = env.BoolVal(stack[sp-1].I < stack[sp].I)
+		case compiler.OpLe:
+			sp--
+			stack[sp-1] = env.BoolVal(stack[sp-1].I <= stack[sp].I)
+		case compiler.OpGt:
+			sp--
+			stack[sp-1] = env.BoolVal(stack[sp-1].I > stack[sp].I)
+		case compiler.OpGe:
+			sp--
+			stack[sp-1] = env.BoolVal(stack[sp-1].I >= stack[sp].I)
+		case compiler.OpAdd:
+			sp--
+			stack[sp-1] = env.IntVal(stack[sp-1].I + stack[sp].I)
+		case compiler.OpSub:
+			sp--
+			stack[sp-1] = env.IntVal(stack[sp-1].I - stack[sp].I)
+		case compiler.OpMul:
+			sp--
+			stack[sp-1] = env.IntVal(stack[sp-1].I * stack[sp].I)
+		case compiler.OpDiv:
+			sp--
+			if stack[sp].I == 0 {
+				d.Err, d.Steps = env.ErrDivZero, steps
+				return
 			}
-			stack[sp-1] = v
+			stack[sp-1] = env.IntVal(stack[sp-1].I / stack[sp].I)
 		case compiler.OpNeg:
-			if sp < 1 {
-				d.Err = env.ErrBadBytecode
-				break
-			}
 			stack[sp-1].I = -stack[sp-1].I
 		case compiler.OpNot:
-			if sp < 1 {
-				d.Err = env.ErrBadBytecode
-				break
-			}
 			stack[sp-1] = env.BoolVal(!stack[sp-1].Bool())
-		case compiler.OpAnd, compiler.OpOr:
-			if sp < 1 {
-				d.Err = env.ErrBadBytecode
-				break
+		case compiler.OpAnd:
+			if !stack[sp-1].Bool() {
+				pc = int(in.A)
+			} else {
+				sp--
 			}
-			if stack[sp-1].Bool() == (in.Op == compiler.OpOr) {
-				pc = int(in.Arg) // keep the deciding value
+		case compiler.OpOr:
+			if stack[sp-1].Bool() {
+				pc = int(in.A)
 			} else {
 				sp--
 			}
 		case compiler.OpJump:
-			pc = int(in.Arg)
+			pc = int(in.A)
 		case compiler.OpJumpIfFalse:
-			if sp < 1 {
-				d.Err = env.ErrBadBytecode
-				break
-			}
 			sp--
 			if !stack[sp].Bool() {
-				pc = int(in.Arg)
+				pc = int(in.A)
+			}
+		case compiler.OpJumpIfTrue:
+			sp--
+			if stack[sp].Bool() {
+				pc = int(in.A)
 			}
 		case compiler.OpRequireAuth:
 			if !r.Authenticated {
-				d.Deny = 401
-				d.Steps = steps
+				d.Deny, d.Steps = 401, steps
 				return
 			}
 		case compiler.OpLimit:
-			if sp < 1 {
-				d.Err = env.ErrBadBytecode
-				break
-			}
 			sp--
-			l := ch.Limits[in.Arg]
+			l := &ch.Limits[in.A]
 			if !d.AddLimit(env.LimitReq{ID: l.ID, Count: l.Count, Per: l.Unit.Duration(), Key: stack[sp].S}) {
-				d.Err = env.ErrTooMany
+				d.Err, d.Steps = env.ErrTooMany, steps
+				return
+			}
+		case compiler.OpSetHeader:
+			sp--
+			if !d.AddHeader(env.HeaderSet{Name: consts[in.A].S, Value: stack[sp].S}) {
+				d.Err, d.Steps = env.ErrTooMany, steps
+				return
 			}
 		case compiler.OpDeny:
-			d.Deny = int(in.Arg)
-			d.Steps = steps
+			d.Deny, d.Steps = int(in.A), steps
 			return
-		case compiler.OpSetHeader:
-			if sp < 1 {
-				d.Err = env.ErrBadBytecode
-				break
-			}
-			sp--
-			if !d.AddHeader(env.HeaderSet{Name: ch.Consts[in.Arg].S, Value: stack[sp].S}) {
-				d.Err = env.ErrTooMany
-			}
 		case compiler.OpReturn:
 			d.Steps = steps
 			return
 		default:
-			d.Err = env.ErrBadBytecode
-		}
-		if d.Err != nil {
-			d.Steps = steps
+			d.Err, d.Steps = env.ErrBadBytecode, steps
 			return
 		}
 	}
-	d.Steps = steps
 }

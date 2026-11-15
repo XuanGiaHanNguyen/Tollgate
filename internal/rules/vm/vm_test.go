@@ -84,11 +84,11 @@ func TestValidateRejectsBadCode(t *testing.T) {
 	mutate := []func(ch *compiler.Chunk){
 		func(ch *compiler.Chunk) { ch.Code = nil },
 		func(ch *compiler.Chunk) { ch.Code = ch.Code[:len(ch.Code)-1] }, // no RETURN
-		func(ch *compiler.Chunk) { ch.Code[0] = compiler.Instr{Op: compiler.OpPushConst, Arg: 999} },
-		func(ch *compiler.Chunk) { ch.Code[1] = compiler.Instr{Op: compiler.OpJump, Arg: 0} }, // backward
-		func(ch *compiler.Chunk) { ch.Code[1] = compiler.Instr{Op: compiler.OpJump, Arg: 9999} },
+		func(ch *compiler.Chunk) { ch.Code[0] = compiler.Instr{Op: compiler.OpPushConst, A: 999} },
+		func(ch *compiler.Chunk) { ch.Code[1] = compiler.Instr{Op: compiler.OpJump, A: 0} }, // backward
+		func(ch *compiler.Chunk) { ch.Code[1] = compiler.Instr{Op: compiler.OpJump, A: 9999} },
 		func(ch *compiler.Chunk) { ch.Code[0] = compiler.Instr{Op: 200} },
-		func(ch *compiler.Chunk) { ch.Code[0] = compiler.Instr{Op: compiler.OpLimit, Arg: 50} },
+		func(ch *compiler.Chunk) { ch.Code[0] = compiler.Instr{Op: compiler.OpLimit, A: 50} },
 	}
 	for i, m := range mutate {
 		ch := *good
@@ -117,5 +117,29 @@ func TestZeroAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() { Run(ch, req, 0, &d) })
 	if allocs != 0 {
 		t.Fatalf("Run allocates %.1f times per evaluation", allocs)
+	}
+}
+
+func TestValidateStackDepth(t *testing.T) {
+	str := []env.Value{env.StringVal("x")}
+	bad := [][]compiler.Instr{
+		{{Op: compiler.OpEq}, {Op: compiler.OpReturn}},                                                                        // underflow
+		{{Op: compiler.OpLimit}, {Op: compiler.OpReturn}},                                                                     // pop from empty
+		{{Op: compiler.OpPushConst}, {Op: compiler.OpJumpIfFalse, A: 3}, {Op: compiler.OpPushConst}, {Op: compiler.OpReturn}}, // depths 0 vs 1 merge at 3
+		{{Op: compiler.OpFieldEqConst, A: 99}, {Op: compiler.OpReturn}},                                                       // bad field
+		{{Op: compiler.OpJumpIfFieldEq, A: 0, B: 0, C: 0}, {Op: compiler.OpReturn}},                                           // backward fused jump
+	}
+	for i, code := range bad {
+		ch := &compiler.Chunk{Code: code, Consts: str, Limits: []compiler.LimitInfo{{}}}
+		if Validate(ch) == nil {
+			t.Errorf("case %d accepted", i)
+		}
+	}
+	good := &compiler.Chunk{Consts: str, Code: []compiler.Instr{
+		{Op: compiler.OpFieldEqConst, A: 0, B: 0}, {Op: compiler.OpJumpIfFalse, A: 3},
+		{Op: compiler.OpDeny, A: 403}, {Op: compiler.OpReturn},
+	}}
+	if err := Validate(good); err != nil {
+		t.Fatal(err)
 	}
 }
