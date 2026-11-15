@@ -229,3 +229,41 @@ YAML `cluster: {self, listen, vnodes, peers: [{name, addr}], batch: {max, flush}
 - **Owner killed mid-run** (acceptance): before the kill +0.01–0.40%; after, admitted 27,306 of an ideal 40,000 (−31.7%, identical in all 3 runs), i.e. two survivors × limit/3 plus their fallback bursts. All ~240k post-kill decisions were counted as degraded. Limits stay enforced in the safe direction.
 - **E4** (1M keys): no key ever moved anywhere except to or from the changed node, at any vnode count. Keys moved when adding a 4th node: 12.7% (1 vnode), 31.0% (16), 18.0% (64), **23.5% (128)**, 23.8% (256), against an ideal 25%. Max/mean keys per node on 3 nodes: 1.54, 1.18, 1.09, **1.08**, 1.04. Removing the node is exactly symmetric by construction (the 4→3 ring is the 3-node ring), so its numbers equal the add case.
 - **Hot-reload fail-open bug (found by CI in M4, fixed in M3 and M4).** The watcher could read the rules file between an editor's truncate and write, get an empty file, and load it as a valid zero-route program, dropping all policy until the next poll. Reloads now require identical content on two consecutive polls (one extra interval of delay) and refuse an empty file (`ErrEmptyRules`).
+
+## M5: AI gateway — plan
+
+### Request path for an AI route
+1. Read the body (≤ 1 MiB) and parse the OpenAI-style request (`model`, `max_tokens`, `stream`, `messages`).
+2. Evaluate rules with the new fields (`request.model`, `request.max_tokens`, `body`). The decision now also carries **budgets**, and the matched route carries **providers**, **hedge** settings and **block_patterns**.
+3. Apply `limit`s as before; then **reserve** each budget's estimated cost on the owner node. A failure releases the ones already taken and answers 429.
+4. Send to the first healthy provider; **hedge** to the next one if no first token by that provider's p95, within the hedge budget. The first to produce a token wins; the loser is cancelled through its `context`.
+5. Stream SSE to the client **without buffering**, passing content through the **safety filter**, which keeps automaton state across chunks.
+6. When the stream ends (or the client leaves), **settle** each reservation with the real cost from the provider's `usage`, or from counted tokens if usage is missing. The cancelled hedge's prompt cost is settled too.
+
+### Packages
+- `internal/ai/tokens`: estimate tokens from text (≈ 4 bytes per token, at least 1 per word); price table → micro-USD (`int64`, no floats for money).
+- `internal/ai/filter`: Aho-Corasick over NFKC-normalized, lower-cased runes. `Stream` keeps the automaton state across chunks and holds back the last (longest pattern − 1) runes before releasing them, so a match that spans a chunk boundary can still be redacted. Actions: `redact` (each matched rune → `*`), `block` (stop the stream), `flag` (metric only). NFKC uses `golang.org/x/text/unicode/norm` (already in the module graph via Prometheus; quasi-standard library). **Tradeoff:** filtered output is NFKC-normalized text, because redaction positions are defined on the normalized stream.
+- `internal/ratelimit/cost`: budget state per (budget ID, key) on the owner: a balance in micro-USD refilling `amount` per period (the same model as the token bucket), with reservations `{id, amount, deadline}`. `Reserve` takes the estimate if the balance covers it. `Settle(id, actual)` refunds `reserved − actual`; overage can drive the balance negative, which blocks later requests until it refills. Settles are **idempotent**: a settled ID is remembered past its deadline. **Expiry** releases (refunds) a reservation at its deadline, so a crashed gateway or cut stream never leaks budget. RPCs `Reserve`/`Settle` are added to the same gRPC service and routed through the ring; an unreachable owner falls back to a local budget at amount/N (degraded), as for limits.
+- `internal/ai/providers`: OpenAI-compatible adapter: build the upstream request (`stream: true`, `stream_options.include_usage`), parse SSE `data:` events into content deltas and usage, and re-emit them.
+- `internal/ai/hedge`: rolling time-to-first-token histogram per provider and model (fixed buckets, atomic counters, recent window); p95 lookup; hedge budget as a token budget like the retry budget (share of requests). The breaker on a provider removes it from the hedge order.
+- `cmd/mockllm`: OpenAI-compatible streaming server. TTFT is log-normal with a configurable heavy tail (probability and multiplier); tokens per second; output length a configurable fraction of `max_tokens`; prompt tokens counted by words (deliberately different from the gateway's estimator, so estimate error is real); optional missing `usage`; optional injected phrases split across chunks; usage totals on `/admin/usage`.
+
+### Rule language additions
+```
+budget 5.00 usd per day by user.id
+providers ["provider-a", "provider-b"]
+hedge after p95 max 5%
+block_patterns "kid-safety" action redact
+```
+- `budget` may appear inside `when`; `providers`, `hedge` and `block_patterns` are route settings and must be top-level (type error otherwise).
+- New decimal literal for USD amounts (lexer `FLOAT`), valid only in `budget`.
+- `request.model` (string), `request.max_tokens` (**int**: the first runtime int), `body` (string), `tokens.estimate(string) int`.
+- **Consequence:** runtime ints mean runtime arithmetic errors are now possible (`x / request.max_tokens`). Both engines already fail closed on them. The optimizer may still drop a pure subexpression whose value doesn't matter (`e && false`), which can elide an error the unoptimized program would hit; this is documented semantics (errors in dead pure subexpressions are not guaranteed). The differential generator divides only by non-zero literals.
+
+### Config
+`pricing: {<model>: {input_per_1k_usd, output_per_1k_usd}}`, `pattern_sets: {<name>: [phrases…]}`, route `type: ai` with providers mapped to upstream names; `reservation_ttl` (default 2 min).
+
+### Experiments
+- **E8:** a Go driver replays a seeded mix of small and very large prompts for one user against a budget, in three setups: request-count limit sized to the mix's average cost, cost budget with reserve-and-settle, and cost budget with the streaming gateway killed mid-run. Reports overspend % (true spend from `mockllm`'s usage totals vs the budget), estimate error, and reservations still outstanding after every deadline (must be 0).
+- **E9:** `mockllm` with heavy-tailed TTFT; hedging off vs on at 1%, 5% and 10% budgets. Reports TTFT p99, extra cost %, and the share of hedges that won.
+- **E10:** Go benchmark streaming fixed corpora in random-size chunks through pattern sets of 100, 1,000 and 10,000 entries, with patterns planted across chunk boundaries. Reports MB/s, p99 per-chunk processing time, holdback, and split-pattern recall (must be 100%).
