@@ -10,7 +10,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 | --- | --- |
 | M1 Single-node gateway | done (compose run not yet verified) |
 | M2 Metrics and first numbers | done: see [`docs/METRICS.md`](docs/METRICS.md) |
-| M3 Rule language | not started |
+| M3 Rule language | done: E2 shows the VM is not yet faster than a fair interpreter (see METRICS.md, DESIGN.md) |
 | M4 Distributed rate limiting | not started |
 | M5 AI gateway | not started |
 | M6 Raft control plane | not started |
@@ -33,4 +33,4 @@ make chaos-kill-backend        # same kill check against compose
 make down
 ```
 
-Gateway config is YAML (`deploy/gateway.yaml`); it is replaced by the rule language in M3 and by the control plane in M6.
+Gateway config is YAML (`deploy/gateway.yaml`); policy (auth, limits, deny, headers) is written in the rule language (`deploy/rules.tg`) and hot-reloaded. Try it with the demo keys: `curl -H 'Authorization: Bearer demo-free-key' localhost:8080/api/ai/chat`.
