@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -40,8 +41,12 @@ func TestWatchReloadsAndKeepsLastGood(t *testing.T) {
 	denyOf := func() int {
 		mu.Lock()
 		defer mu.Unlock()
+		r := current.Match("/x")
+		if r == nil {
+			return -1 // no policy at all: the bug this guards against
+		}
 		var d env.Decision
-		current.Eval(current.Match("/x"), VM, &env.Request{}, &d)
+		current.Eval(r, VM, &env.Request{}, &d)
 		return d.Deny
 	}
 	if denyOf() != 401 {
@@ -77,5 +82,40 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("condition not met")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestWatchIgnoresEmptyAndPartialWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rules.tg")
+	os.WriteFile(path, []byte(`route "/*" { deny 401 }`), 0o644)
+	var mu sync.Mutex
+	var loads int
+	var lastErr error
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := Watch(ctx, path, 10*time.Millisecond, Options{}, func(rs *RuleSet, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			lastErr = err
+			return
+		}
+		loads++
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A truncated file that stays empty is refused, never loaded.
+	os.WriteFile(path, nil, 0o644)
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return lastErr != nil })
+	mu.Lock()
+	if !errors.Is(lastErr, ErrEmptyRules) || loads != 1 {
+		t.Fatalf("err=%v loads=%d", lastErr, loads)
+	}
+	mu.Unlock()
+	// Starting with an empty file is refused too.
+	empty := filepath.Join(t.TempDir(), "empty.tg")
+	os.WriteFile(empty, []byte("  \n"), 0o644)
+	if err := Watch(context.Background(), empty, time.Second, Options{}, func(*RuleSet, error) {}); !errors.Is(err, ErrEmptyRules) {
+		t.Fatalf("err = %v", err)
 	}
 }
