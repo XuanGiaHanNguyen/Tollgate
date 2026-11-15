@@ -51,7 +51,7 @@ jobs:
     needs: test
     strategy:
       matrix:
-        bin: [tollgate-gw, mockbackend]
+        bin: [tollgate-gw, mockbackend, mockllm]
     steps:
       - uses: actions/checkout@v4
       - name: docker build
