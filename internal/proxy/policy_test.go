@@ -129,6 +129,8 @@ func TestPolicyEndToEnd(t *testing.T) {
 				`tollgate_requests_total{node="n1",route="/",status="429"} 2`,
 				`tollgate_rule_eval_seconds_count{engine="` + engine + `"}`,
 				`tollgate_config_version{node="n1"} 1`,
+				`tollgate_ratelimit_decisions_total{node="n1",result="deny"} 2`,
+				`tollgate_ratelimit_decisions_total{node="n1",result="degraded"} 0`,
 			} {
 				if !strings.Contains(out, w) {
 					t.Errorf("metrics missing %q", w)

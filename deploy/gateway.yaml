@@ -1,4 +1,5 @@
-# Gateway config for docker-compose (M1: 1 gateway, 3 backends).
+# Gateway config for docker-compose: 3 gateways share this file (each passes
+# -cluster-self) and enforce limits together over gRPC (M4).
 listen: ":8080"
 admin_listen: ":9090"
 shutdown_timeout: 15s
@@ -31,3 +32,13 @@ auth:
   api_keys:
     - {key: demo-free-key, user_id: alice, tier: free}
     - {key: demo-pro-key, user_id: bob, tier: pro}
+cluster:
+  listen: ":7000"
+  self: gateway-1          # overridden per container with -cluster-self
+  vnodes: 128
+  peer_timeout: 20ms
+  batch: {max: 100, flush: 500us}
+  members:
+    - {name: gateway-1, addr: "gateway-1:7000"}
+    - {name: gateway-2, addr: "gateway-2:7000"}
+    - {name: gateway-3, addr: "gateway-3:7000"}

@@ -17,16 +17,22 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
+	tollgatev1 "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/proxy"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/peer"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules"
 )
 
 func main() {
 	cfgPath := flag.String("config", "tollgate.yaml", "path to gateway config")
 	logLevel := flag.String("log-level", "info", "debug, info, warn or error")
-	node := flag.String("node", defaultNode(), "node name used in metric labels")
+	clusterSelf := flag.String("cluster-self", "", "override cluster.self, so one config file serves every gateway")
+	node := flag.String("node", "", "node name used in metric labels (default: cluster.self, $TOLLGATE_NODE or hostname)")
 	flag.Parse()
 
 	var lvl slog.Level
@@ -36,7 +42,7 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 	slog.SetDefault(log)
 
-	if err := run(*cfgPath, *node, log); err != nil {
+	if err := run(*cfgPath, *node, *clusterSelf, log); err != nil {
 		log.Error("exit", "err", err)
 		os.Exit(1)
 	}
@@ -52,13 +58,61 @@ func defaultNode() string {
 	return "gw"
 }
 
-func run(cfgPath, node string, log *slog.Logger) error {
+func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
 	}
+	if clusterSelf != "" {
+		if cfg.Cluster == nil {
+			return fmt.Errorf("-cluster-self given but the config has no cluster block")
+		}
+		cfg.Cluster.Self = clusterSelf
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+	}
+	if node == "" {
+		node = defaultNode()
+		if cfg.Cluster != nil {
+			node = cfg.Cluster.Self
+		}
+	}
 	m := metrics.NewGateway(node)
-	gw, err := proxy.New(cfg, proxy.Options{Logger: log, Metrics: m})
+
+	var lim *ratelimit.Limiter
+	var peerSrv *grpc.Server
+	if cl := cfg.Cluster; cl != nil {
+		members := make([]ratelimit.Member, len(cl.Members))
+		for i, mb := range cl.Members {
+			members[i] = ratelimit.Member{Name: mb.Name, Addr: mb.Addr}
+		}
+		lim, err = ratelimit.New(ratelimit.Config{
+			Self: cl.Self, Members: members, VNodes: cl.VNodes,
+			Peer:       peer.Config{MaxBatch: cl.Batch.Max, FlushInterval: cl.Batch.Flush, Timeout: cl.PeerTimeout},
+			Hooks:      peer.Hooks{RPC: m.PeerRPC},
+			OnDecision: m.RateLimitDecision,
+		})
+		if err != nil {
+			return err
+		}
+		defer lim.Close()
+		ln, err := net.Listen("tcp", cl.Listen)
+		if err != nil {
+			return err
+		}
+		peerSrv = grpc.NewServer()
+		tollgatev1.RegisterRateLimitServiceServer(peerSrv, &peer.Server{Store: lim.Local()})
+		go func() {
+			if err := peerSrv.Serve(ln); err != nil {
+				log.Error("peer gRPC server stopped", "err", err)
+			}
+		}()
+		log.Info("cluster rate limiting", "self", cl.Self, "members", len(members), "listen", cl.Listen,
+			"vnodes", cl.VNodes, "batch_max", cl.Batch.Max, "batch_flush", cl.Batch.Flush.String())
+	}
+
+	gw, err := proxy.New(cfg, proxy.Options{Logger: log, Metrics: m, Limiter: lim})
 	if err != nil {
 		return err
 	}
@@ -142,6 +196,9 @@ func run(cfgPath, node string, log *slog.Logger) error {
 		adminErr = proxy.Serve(ctx, srv, adminLn, cfg.ShutdownTimeout)
 	}()
 	wg.Wait()
+	if peerSrv != nil {
+		peerSrv.GracefulStop()
+	}
 	log.Info("stopped")
 	if proxyErr != nil {
 		return proxyErr

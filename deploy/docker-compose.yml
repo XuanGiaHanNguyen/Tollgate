@@ -1,4 +1,5 @@
-# M2 topology: 1 gateway + 3 mock backends, Prometheus and Grafana.
+# M4 topology: 3 gateways (cluster rate limiting) + 3 mock backends, Prometheus and Grafana.
+# Gateways: localhost:8080-8082 (admin 9090-9092).
 # Later milestones add control plane, more gateways, mockllm and observability.
 name: tollgate
 
@@ -9,14 +10,34 @@ x-backend: &backend
   restart: "no"
 
 services:
-  gateway:
+  gateway-1:
     build: {context: .., args: {BIN: tollgate-gw}}
     image: tollgate/tollgate-gw:dev
-    command: ["-config", "/etc/tollgate/gateway.yaml", "-node", "gw-1"]
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-1"]
     volumes:
       - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
       - ./rules.tg:/etc/tollgate/rules.tg:ro
     ports: ["8080:8080", "9090:9090"]
+    depends_on: [backend-1, backend-2, backend-3]
+
+  gateway-2:
+    build: {context: .., args: {BIN: tollgate-gw}}
+    image: tollgate/tollgate-gw:dev
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-2"]
+    volumes:
+      - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
+      - ./rules.tg:/etc/tollgate/rules.tg:ro
+    ports: ["8081:8080", "9091:9090"]
+    depends_on: [backend-1, backend-2, backend-3]
+
+  gateway-3:
+    build: {context: .., args: {BIN: tollgate-gw}}
+    image: tollgate/tollgate-gw:dev
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-3"]
+    volumes:
+      - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
+      - ./rules.tg:/etc/tollgate/rules.tg:ro
+    ports: ["8082:8080", "9092:9090"]
     depends_on: [backend-1, backend-2, backend-3]
 
   backend-1:
@@ -34,7 +55,7 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
     ports: ["9091:9090"]
-    depends_on: [gateway]
+    depends_on: [gateway-1, gateway-2, gateway-3]
 
   grafana:
     image: grafana/grafana:12.1.0

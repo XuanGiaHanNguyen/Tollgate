@@ -25,6 +25,30 @@ type Config struct {
 	Routes          []Route       `yaml:"routes"`
 	Rules           Rules         `yaml:"rules"`
 	Auth            Auth          `yaml:"auth"`
+	Cluster         *Cluster      `yaml:"cluster"` // nil: single-node limiting
+}
+
+// Cluster configures distributed rate limiting (M4). Membership is static
+// until the control plane provides it (M6); every gateway lists all members.
+type Cluster struct {
+	Self        string          `yaml:"self"`   // this gateway's member name
+	Listen      string          `yaml:"listen"` // gRPC address for peer checks
+	VNodes      int             `yaml:"vnodes"`
+	PeerTimeout time.Duration   `yaml:"peer_timeout"`
+	Batch       Batch           `yaml:"batch"`
+	Members     []ClusterMember `yaml:"members"`
+}
+
+// Batch tunes peer-check batching. max: 1 disables it.
+type Batch struct {
+	Max   int           `yaml:"max"`
+	Flush time.Duration `yaml:"flush"`
+}
+
+// ClusterMember is one gateway.
+type ClusterMember struct {
+	Name string `yaml:"name"`
+	Addr string `yaml:"addr"`
 }
 
 // Rules points at the policy file written in the rule language (M3).
@@ -186,6 +210,20 @@ func (c *Config) setDefaults() {
 	if c.Rules.Engine == "" {
 		c.Rules.Engine = "vm"
 	}
+	if cl := c.Cluster; cl != nil {
+		if cl.VNodes == 0 {
+			cl.VNodes = 128
+		}
+		if cl.PeerTimeout == 0 {
+			cl.PeerTimeout = 20 * time.Millisecond
+		}
+		if cl.Batch.Max == 0 {
+			cl.Batch.Max = 100
+		}
+		if cl.Batch.Flush == 0 {
+			cl.Batch.Flush = 500 * time.Microsecond
+		}
+	}
 	for i := range c.Routes {
 		r := &c.Routes[i]
 		if r.Name == "" {
@@ -261,6 +299,27 @@ func (c *Config) Validate() error {
 	}
 	if c.Rules.Budget < 0 {
 		add("rules.budget must be positive")
+	}
+	if cl := c.Cluster; cl != nil {
+		if cl.Listen == "" {
+			add("cluster.listen is required")
+		}
+		names := map[string]bool{}
+		for i, m := range cl.Members {
+			if m.Name == "" || m.Addr == "" {
+				add("cluster.members[%d]: name and addr are required", i)
+			}
+			if names[m.Name] {
+				add("cluster.members[%d]: duplicate member %q", i, m.Name)
+			}
+			names[m.Name] = true
+		}
+		if !names[cl.Self] {
+			add("cluster.self %q is not in cluster.members", cl.Self)
+		}
+		if cl.Batch.Max < 1 || cl.Batch.Max > 1000 {
+			add("cluster.batch.max must be in [1,1000]")
+		}
 	}
 	keys := map[string]bool{}
 	for i, k := range c.Auth.APIKeys {

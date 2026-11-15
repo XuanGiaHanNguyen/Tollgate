@@ -30,6 +30,9 @@ type Gateway struct {
 	configVersion prometheus.Gauge
 	ruleEval      map[string]prometheus.Observer // by engine
 	policy        map[string]prometheus.Counter  // by result
+	rlDecisions   map[string]prometheus.Counter  // by result
+	peerRPC       *prometheus.HistogramVec
+	batchSize     *prometheus.HistogramVec
 }
 
 // Policy outcomes for tollgate_policy_decisions_total.
@@ -91,7 +94,26 @@ func NewGateway(node string) *Gateway {
 		Name: "tollgate_policy_decisions_total",
 		Help: "Rule policy outcomes: allow, deny (deny/require auth), limited (429), error (fail closed).",
 	}, []string{"result"})
-	reg.MustRegister(g.requests, g.duration, overhead, g.retries, g.breakerState, g.backendHealth, configVersion, ruleEval, policy)
+	rl := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tollgate_ratelimit_decisions_total",
+		Help: "Rate-limit decisions: allow, deny, or degraded (owner unreachable, local fallback).",
+	}, []string{"result", "node"})
+	g.peerRPC = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "tollgate_ratelimit_peer_rpc_seconds",
+		Help:    "CheckLimits RPC latency to the key owner.",
+		Buckets: latencyBuckets,
+	}, []string{"peer"})
+	g.batchSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "tollgate_ratelimit_batch_size",
+		Help:    "Checks per CheckLimits RPC.",
+		Buckets: []float64{1, 2, 4, 8, 16, 32, 64, 100},
+	}, []string{"peer"})
+	reg.MustRegister(g.requests, g.duration, overhead, g.retries, g.breakerState, g.backendHealth, configVersion, ruleEval, policy,
+		rl, g.peerRPC, g.batchSize)
+	g.rlDecisions = map[string]prometheus.Counter{}
+	for _, r := range []string{"allow", "deny", "degraded"} {
+		g.rlDecisions[r] = rl.WithLabelValues(r, node)
+	}
 	g.ruleEval = map[string]prometheus.Observer{"vm": ruleEval.WithLabelValues("vm"), "interp": ruleEval.WithLabelValues("interp")}
 	g.policy = map[string]prometheus.Counter{}
 	for _, r := range []string{PolicyAllow, PolicyDeny, PolicyLimited, PolicyError} {
@@ -143,6 +165,18 @@ func (g *Gateway) ObserveRuleEval(engine string, seconds float64) {
 
 // Policy counts one policy outcome.
 func (g *Gateway) Policy(result string) { g.policy[result].Inc() }
+
+// RateLimitDecision counts one limiter decision (allow, deny, degraded).
+func (g *Gateway) RateLimitDecision(result string) { g.rlDecisions[result].Inc() }
+
+// PeerRPC records one CheckLimits RPC (per batch, not per request).
+func (g *Gateway) PeerRPC(peer string, seconds float64, batch int, err error) {
+	if err != nil {
+		return
+	}
+	g.peerRPC.WithLabelValues(peer).Observe(seconds)
+	g.batchSize.WithLabelValues(peer).Observe(float64(batch))
+}
 
 // SetConfigVersion records the active config version.
 func (g *Gateway) SetConfigVersion(v uint64) { g.configVersion.Set(float64(v)) }

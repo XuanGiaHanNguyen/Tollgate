@@ -20,6 +20,7 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/lb"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit"
 )
 
 // Upstream is a named pool of targets with its balancer and health checker.
@@ -57,6 +58,8 @@ type Gateway struct {
 type Options struct {
 	Logger  *slog.Logger
 	Metrics *metrics.Gateway // optional
+	// Limiter enforces rule limits; nil means a single-node local limiter.
+	Limiter *ratelimit.Limiter
 	// OnBreakerChange and OnHealthChange are metrics/log hooks.
 	OnBreakerChange func(target string, from, to breaker.State)
 	OnHealthChange  func(target string, healthy bool)
@@ -69,7 +72,16 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 		log = slog.Default()
 	}
 	g := &Gateway{upstreams: map[string]*Upstream{}, log: log, metrics: opts.Metrics,
-		policy: newPolicy(cfg), stop: make(chan struct{})}
+		stop: make(chan struct{})}
+	lim := opts.Limiter
+	if lim == nil {
+		var onDecision func(string)
+		if opts.Metrics != nil {
+			onDecision = opts.Metrics.RateLimitDecision
+		}
+		lim = ratelimit.NewLocal(onDecision)
+	}
+	g.policy = newPolicy(cfg, lim)
 	if m := opts.Metrics; m != nil {
 		// Metrics hooks run alongside any caller-supplied hooks.
 		userBreaker, userHealth := opts.OnBreakerChange, opts.OnHealthChange
