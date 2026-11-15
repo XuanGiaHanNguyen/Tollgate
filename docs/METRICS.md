@@ -81,6 +81,31 @@ Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_s
 | gw3 | 15000 | 0.198 | 1.849 | 0.00% | 14982 | 2.52 | 25 / 50 | pass |
 | gw3 | 20000 | 8.375 | 976.452 | 7.46% | 11955 | 1.63 | 26 / 177 | fail: p99 976.45 ms >= limit |
 
+### E2: Does bytecode beat tree-walking?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-15 03:32 → 03:33 (UTC) |
+| Commit | `9993ed335ed8 (uncommitted changes)` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.26.0 / k6 v2.4.0 |
+| Topology | single process (go test); 1 gateway node(s) max |
+| Load average at start | 10.50 |
+| Power | AC |
+| Repetitions | 3 (median reported) |
+
+Method: `go test ./bench/go -bench E2 -benchmem`; rule sets with xs=2, s=10, m=50, l=200, xl=1000 conditional statements in the evaluated route. Both engines run the same optimized AST; TestE2EnginesAgree and internal/rules TestDifferential must pass first.
+
+Engines agree (differential gate passed): **true**
+
+| Rule set | Statements | Bytecode instrs | VM ns/eval | VM allocs/eval | Interpreter ns/eval | Interpreter allocs/eval | Speedup (interp ÷ VM) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| xs | 2 | 26 | 131.6 | 0 | 112.6 | 0 | 0.86× |
+| s | 10 | 126 | 463.9 | 0 | 457.1 | 0 | 0.99× |
+| m | 50 | 626 | 2099.0 | 0 | 2102.0 | 0 | 1.00× |
+| l | 200 | 2504 | 8157.0 | 0 | 8308.0 | 0 | 1.02× |
+| xl | 1000 | 12504 | 39904.0 | 0 | 41140.0 | 0 | 1.03× |
+
 ### E7: Does the breaker protect latency?
 
 | Environment | |
@@ -123,7 +148,6 @@ _No results yet._
 
 ## Not yet measured
 
-- E2: Does bytecode beat tree-walking?
 - E3: How accurate is distributed limiting?
 - E4: Does consistent hashing minimize movement?
 - E5: How does Raft behave?
