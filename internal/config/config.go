@@ -26,6 +26,21 @@ type Config struct {
 	Rules           Rules         `yaml:"rules"`
 	Auth            Auth          `yaml:"auth"`
 	Cluster         *Cluster      `yaml:"cluster"` // nil: single-node limiting
+	AI              AI            `yaml:"ai"`
+}
+
+// AI configures model routes (M5).
+type AI struct {
+	ReservationTTL time.Duration       `yaml:"reservation_ttl"` // hold deadline for budget reservations
+	Pricing        map[string]Price    `yaml:"pricing"`         // per model; "*" is the default
+	PatternSets    map[string][]string `yaml:"pattern_sets"`    // named safety-filter phrase lists
+	HedgeMinSample int                 `yaml:"hedge_min_samples"`
+}
+
+// Price per 1,000 tokens in USD.
+type Price struct {
+	InputPer1K  float64 `yaml:"input_per_1k_usd"`
+	OutputPer1K float64 `yaml:"output_per_1k_usd"`
 }
 
 // Cluster configures distributed rate limiting (M4). Membership is static
@@ -129,6 +144,7 @@ type Breaker struct {
 // Route maps matching requests to an upstream.
 type Route struct {
 	Name     string   `yaml:"name"`
+	Type     string   `yaml:"type"` // "" (HTTP proxy) or "ai" (model API: budgets, hedging, safety filter)
 	Prefix   string   `yaml:"prefix"`
 	Host     string   `yaml:"host"`
 	Methods  []string `yaml:"methods"`
@@ -200,6 +216,12 @@ func (c *Config) setDefaults() {
 	if c.Transport.ForceHTTP2 == nil {
 		t := true
 		c.Transport.ForceHTTP2 = &t
+	}
+	if c.AI.ReservationTTL == 0 {
+		c.AI.ReservationTTL = 2 * time.Minute
+	}
+	if c.AI.HedgeMinSample == 0 {
+		c.AI.HedgeMinSample = 20
 	}
 	if c.Rules.ReloadInterval == 0 {
 		c.Rules.ReloadInterval = time.Second
@@ -321,6 +343,16 @@ func (c *Config) Validate() error {
 			add("cluster.batch.max must be in [1,1000]")
 		}
 	}
+	for model, p := range c.AI.Pricing {
+		if p.InputPer1K < 0 || p.OutputPer1K < 0 {
+			add("ai.pricing[%s]: prices must be >= 0", model)
+		}
+	}
+	for name, set := range c.AI.PatternSets {
+		if len(set) == 0 {
+			add("ai.pattern_sets[%s]: empty set", name)
+		}
+	}
 	keys := map[string]bool{}
 	for i, k := range c.Auth.APIKeys {
 		if k.Key == "" || k.UserID == "" {
@@ -343,6 +375,9 @@ func (c *Config) Validate() error {
 		}
 		if r.Retry.Attempts < 1 || r.Retry.Attempts > 10 {
 			add("%s: retry.attempts must be in [1,10]", where)
+		}
+		if r.Type != "" && r.Type != "ai" {
+			add("%s: type must be empty or \"ai\", got %q", where, r.Type)
 		}
 		k := key{r.Prefix, r.Host, strings.Join(r.Methods, ",")}
 		if seen[k] {

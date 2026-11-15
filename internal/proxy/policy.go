@@ -54,13 +54,28 @@ func (g *Gateway) RulesVersion() uint64 { return g.policy.version.Load() }
 // or the status to answer with. It may add request headers (set_header) and
 // removes the gateway API key so it never reaches backends.
 func (g *Gateway) applyPolicy(r *http.Request) int {
+	status, _, _ := g.evalPolicy(r, nil)
+	return status
+}
+
+// policyResult is what an AI route needs beyond the status.
+type policyResult struct {
+	route *rules.Route // nil when no rule route matched
+	d     env.Decision
+	user  string
+}
+
+// evalPolicy is applyPolicy with optional AI fields (model, max_tokens,
+// body) and the matched rule route and decision returned for budgets and
+// AI settings.
+func (g *Gateway) evalPolicy(r *http.Request, ai *env.Request) (int, *policyResult, error) {
 	rs := g.policy.rules.Load()
 	if rs == nil {
-		return 0
+		return 0, &policyResult{}, nil
 	}
 	route := rs.Match(r.URL.Path)
 	if route == nil {
-		return 0
+		return 0, &policyResult{}, nil
 	}
 
 	req := env.Request{
@@ -77,13 +92,16 @@ func (g *Gateway) applyPolicy(r *http.Request) int {
 			r.Header.Del("Authorization")
 		}
 	}
-
-	var d env.Decision
+	if ai != nil {
+		req.Model, req.MaxTokens, req.Body = ai.Model, ai.MaxTokens, ai.Body
+	}
+	res := &policyResult{route: route, user: req.UserID}
+	d := &res.d
 	var start time.Time
 	if g.metrics != nil {
 		start = time.Now()
 	}
-	rs.Eval(route, g.policy.engine, &req, &d)
+	rs.Eval(route, g.policy.engine, &req, d)
 	if g.metrics != nil {
 		g.metrics.ObserveRuleEval(g.policy.engine.String(), time.Since(start).Seconds())
 	}
@@ -92,10 +110,10 @@ func (g *Gateway) applyPolicy(r *http.Request) int {
 	case d.Err != nil:
 		g.log.Error("rule evaluation failed; failing closed", "route", route.Pattern, "err", d.Err)
 		g.countPolicy(metrics.PolicyError)
-		return http.StatusInternalServerError
+		return http.StatusInternalServerError, res, d.Err
 	case d.Deny != 0:
 		g.countPolicy(metrics.PolicyDeny)
-		return d.Deny
+		return d.Deny, res, nil
 	}
 	// Every applicable limit must admit the request. Earlier buckets keep
 	// the token they gave even if a later one refuses. The limiter checks
@@ -103,14 +121,14 @@ func (g *Gateway) applyPolicy(r *http.Request) int {
 	for i := 0; i < d.NLimits; i++ {
 		if ok, _ := g.policy.limiter.Allow(r.Context(), d.Limits[i]); !ok {
 			g.countPolicy(metrics.PolicyLimited)
-			return http.StatusTooManyRequests
+			return http.StatusTooManyRequests, res, nil
 		}
 	}
 	for i := 0; i < d.NHeaders; i++ {
 		r.Header.Set(d.Headers[i].Name, d.Headers[i].Value)
 	}
 	g.countPolicy(metrics.PolicyAllow)
-	return 0
+	return 0, res, nil
 }
 
 func (g *Gateway) countPolicy(result string) {

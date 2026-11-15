@@ -33,6 +33,15 @@ type Gateway struct {
 	rlDecisions   map[string]prometheus.Counter  // by result
 	peerRPC       *prometheus.HistogramVec
 	batchSize     *prometheus.HistogramVec
+
+	costReserved *prometheus.CounterVec
+	costSettled  *prometheus.CounterVec
+	costErr      *prometheus.HistogramVec
+	resvExpired  prometheus.Counter
+	ttft         *prometheus.HistogramVec
+	hedges       *prometheus.CounterVec
+	filterHits   *prometheus.CounterVec
+	holdback     *prometheus.HistogramVec
 }
 
 // Policy outcomes for tollgate_policy_decisions_total.
@@ -108,8 +117,34 @@ func NewGateway(node string) *Gateway {
 		Help:    "Checks per CheckLimits RPC.",
 		Buckets: []float64{1, 2, 4, 8, 16, 32, 64, 100},
 	}, []string{"peer"})
+	g.costReserved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tollgate_cost_reserved_usd_total", Help: "Money held before responses finish.",
+	}, []string{"model"})
+	g.costSettled = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tollgate_cost_settled_usd_total", Help: "Real spend after settlement.",
+	}, []string{"model"})
+	g.costErr = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "tollgate_cost_estimate_error_ratio", Help: "(estimate - actual) / actual per request.",
+		Buckets: []float64{-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, 4, 8},
+	}, []string{"model"})
+	expired := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tollgate_reservations_expired_total", Help: "Reservations released at their deadline (crashes, cut streams).",
+	}, []string{"node"})
+	g.ttft = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "tollgate_time_to_first_token_seconds", Help: "Provider time to first token.", Buckets: latencyBuckets,
+	}, []string{"provider", "model"})
+	g.hedges = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tollgate_hedges_total", Help: "Hedged requests by provider and outcome (won, lost, cancelled).",
+	}, []string{"provider", "outcome"})
+	g.filterHits = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tollgate_filter_matches_total", Help: "Safety filter matches.",
+	}, []string{"pattern_set", "action"})
+	g.holdback = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "tollgate_filter_holdback_seconds", Help: "Delay added by holding back chunk tails.", Buckets: latencyBuckets,
+	}, []string{"pattern_set"})
 	reg.MustRegister(g.requests, g.duration, overhead, g.retries, g.breakerState, g.backendHealth, configVersion, ruleEval, policy,
-		rl, g.peerRPC, g.batchSize)
+		rl, g.peerRPC, g.batchSize, g.costReserved, g.costSettled, g.costErr, expired, g.ttft, g.hedges, g.filterHits, g.holdback)
+	g.resvExpired = expired.WithLabelValues(node)
 	g.rlDecisions = map[string]prometheus.Counter{}
 	for _, r := range []string{"allow", "deny", "degraded"} {
 		g.rlDecisions[r] = rl.WithLabelValues(r, node)
@@ -176,6 +211,42 @@ func (g *Gateway) PeerRPC(peer string, seconds float64, batch int, err error) {
 	}
 	g.peerRPC.WithLabelValues(peer).Observe(seconds)
 	g.batchSize.WithLabelValues(peer).Observe(float64(batch))
+}
+
+// AI metrics. Label lookups happen once per model call, not per byte.
+
+// CostReserved records a budget hold (micro-USD).
+func (g *Gateway) CostReserved(model string, micro int64) {
+	g.costReserved.WithLabelValues(model).Add(float64(micro) / 1e6)
+}
+
+// CostSettled records real spend (micro-USD) and the estimate error.
+func (g *Gateway) CostSettled(model string, estimate, actual int64) {
+	g.costSettled.WithLabelValues(model).Add(float64(actual) / 1e6)
+	if actual > 0 {
+		g.costErr.WithLabelValues(model).Observe(float64(estimate-actual) / float64(actual))
+	}
+}
+
+// ReservationExpired counts a hold released at its deadline.
+func (g *Gateway) ReservationExpired() { g.resvExpired.Inc() }
+
+// TTFT records a provider's time to first token.
+func (g *Gateway) TTFT(provider, model string, seconds float64) {
+	g.ttft.WithLabelValues(provider, model).Observe(seconds)
+}
+
+// Hedge records one hedged request's outcome for a provider.
+func (g *Gateway) Hedge(provider, outcome string) { g.hedges.WithLabelValues(provider, outcome).Inc() }
+
+// FilterMatches counts safety filter hits.
+func (g *Gateway) FilterMatches(set, action string, n int) {
+	g.filterHits.WithLabelValues(set, action).Add(float64(n))
+}
+
+// FilterHoldback records how long held-back text waited.
+func (g *Gateway) FilterHoldback(set string, seconds float64) {
+	g.holdback.WithLabelValues(set).Observe(seconds)
 }
 
 // SetConfigVersion records the active config version.

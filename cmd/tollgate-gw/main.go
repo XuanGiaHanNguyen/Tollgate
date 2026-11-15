@@ -92,6 +92,7 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 			Peer:       peer.Config{MaxBatch: cl.Batch.Max, FlushInterval: cl.Batch.Flush, Timeout: cl.PeerTimeout},
 			Hooks:      peer.Hooks{RPC: m.PeerRPC},
 			OnDecision: m.RateLimitDecision,
+			Budget:     ratelimit.BudgetHooks{Expired: func(int64) { m.ReservationExpired() }},
 		})
 		if err != nil {
 			return err
@@ -130,6 +131,10 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 		err := rules.Watch(ctx, path, cfg.Rules.ReloadInterval, rules.Options{Budget: cfg.Rules.Budget},
 			func(rs *rules.RuleSet, err error) {
 				if err != nil {
+					log.Error("rules not loaded; keeping the previous version", "file", path, "err", err.Error())
+					return
+				}
+				if err := gw.CheckRules(rs); err != nil {
 					log.Error("rules not loaded; keeping the previous version", "file", path, "err", err.Error())
 					return
 				}

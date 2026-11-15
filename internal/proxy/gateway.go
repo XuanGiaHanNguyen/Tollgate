@@ -41,6 +41,7 @@ type Route struct {
 	upstream *Upstream
 	proxy    *httputil.ReverseProxy
 	metrics  *metrics.RouteMetrics // nil when metrics are off
+	ai       bool                  // type: ai — model API handling
 }
 
 // Gateway serves proxied traffic. The router is held in an atomic pointer so
@@ -51,6 +52,7 @@ type Gateway struct {
 	log       *slog.Logger
 	metrics   *metrics.Gateway
 	policy    *policy
+	ai        *aiState
 	stop      chan struct{}
 }
 
@@ -76,12 +78,19 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 	lim := opts.Limiter
 	if lim == nil {
 		var onDecision func(string)
+		var hooks ratelimit.BudgetHooks
 		if opts.Metrics != nil {
 			onDecision = opts.Metrics.RateLimitDecision
+			hooks.Expired = func(int64) { opts.Metrics.ReservationExpired() }
 		}
-		lim = ratelimit.NewLocal(onDecision, ratelimit.BudgetHooks{})
+		lim = ratelimit.NewLocal(onDecision, hooks)
 	}
 	g.policy = newPolicy(cfg, lim)
+	ai, err := newAIState(cfg)
+	if err != nil {
+		return nil, err
+	}
+	g.ai = ai
 	if m := opts.Metrics; m != nil {
 		// Metrics hooks run alongside any caller-supplied hooks.
 		userBreaker, userHealth := opts.OnBreakerChange, opts.OnHealthChange
@@ -122,7 +131,7 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 		up := g.upstreams[rc.Upstream]
 		rt := &Route{
 			Name: rc.Name, prefix: rc.Prefix, host: rc.Host, methods: rc.Methods,
-			cfg: rc, upstream: up,
+			cfg: rc, upstream: up, ai: rc.Type == "ai",
 		}
 		if opts.Metrics != nil {
 			rt.metrics = opts.Metrics.Route(rc.Name)
@@ -249,6 +258,19 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route := g.router.Load().Match(r)
 	if route == nil {
 		http.Error(w, "no route", http.StatusNotFound)
+		return
+	}
+	if route.ai {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w}
+		g.serveAI(sw, r, route)
+		if route.metrics != nil {
+			status := sw.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			route.metrics.ObserveRequest(status, time.Since(start).Seconds())
+		}
 		return
 	}
 	if route.metrics == nil {
