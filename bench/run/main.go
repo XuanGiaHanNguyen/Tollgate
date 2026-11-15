@@ -47,7 +47,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e3|e4|e7")
+		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e3|e4|e7|e10")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -71,7 +71,7 @@ func main() {
 			dir = filepath.Join(os.TempDir(), "tollgate-quick-results")
 		}
 	}
-	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" && exp != "e4" { // pure Go, no binaries
+	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" && exp != "e4" && exp != "e10" { // pure Go, no binaries
 		if err := build(); err != nil {
 			log.Fatalf("build: %v", err)
 		}
@@ -90,6 +90,8 @@ func main() {
 		res, err = runE4()
 	case "e7":
 		res, err = runE7()
+	case "e10":
+		res, err = runE10()
 	default:
 		flag.Usage()
 		os.Exit(2)

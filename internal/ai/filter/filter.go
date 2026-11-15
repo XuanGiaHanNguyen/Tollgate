@@ -245,6 +245,7 @@ type Stream struct {
 	heldSince  time.Time // when the current holdback started
 	LastHold   time.Duration
 	OnHoldback func(time.Duration) // observes how long held-back runes waited
+	OnMatch    func(Match)         // optional; rune offsets in the normalized stream
 }
 
 // NewStream starts filtering one response with the given action.
@@ -305,6 +306,9 @@ func (st *Stream) consume(final bool) {
 			if p := st.set.nodes[n].out; p >= 0 {
 				st.matches++
 				start := st.pos - st.set.lens[p]
+				if st.OnMatch != nil {
+					st.OnMatch(Match{Pattern: int(p), Start: start, End: st.pos})
+				}
 				switch st.action {
 				case Redact:
 					for i := max(start, st.base); i < st.pos; i++ {

@@ -56,7 +56,7 @@ func TestCaseAndNFKC(t *testing.T) {
 	for _, text := range []string{
 		"my HOME ADDRESS is",
 		"my Ｈｏｍｅ Ａｄｄｒｅｓｓ is", // full-width look-alikes
-		"my home address is",      // no-break space normalizes to space
+		"my home address is", // no-break space normalizes to space
 	} {
 		if len(s.Scan(text)) != 1 {
 			t.Errorf("missed in %q", text)

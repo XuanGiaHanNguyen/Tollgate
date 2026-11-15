@@ -81,6 +81,8 @@ func main() {
 				writeE4(&b, r)
 			case "E7":
 				writeE7(&b, r)
+			case "E10":
+				writeE10(&b, r)
 			default:
 				b.WriteString("_No renderer for this experiment yet; see the raw result file._\n\n")
 			}
@@ -461,4 +463,50 @@ func writeE4(b *strings.Builder, r *benchfmt.Result) {
 			row.S3["max_over_mean"], row.S3["min_over_mean"], row.S3["stddev_pct_of_mean"], row.S4["max_over_mean"])
 	}
 	b.WriteString("\nThe share of keys that moves equals the share the changed node owns, so it tracks the ideal 1/N only as closely as the ring spreads load; more virtual nodes tighten both.\n\n")
+}
+
+// ---- E10 ----
+
+type e10Summary struct {
+	Sizes []struct {
+		Patterns      int     `json:"patterns"`
+		MaxLenRunes   int     `json:"longest_pattern_runes"`
+		HoldbackRunes int     `json:"holdback_runes"`
+		HoldbackAt50  float64 `json:"holdback_ms_at_50_tokens_per_s"`
+		Runs          []struct {
+			MBPerSec     float64 `json:"mb_per_sec"`
+			ChunkP50Ns   float64 `json:"chunk_p50_ns"`
+			ChunkP99Ns   float64 `json:"chunk_p99_ns"`
+			Planted      int     `json:"planted"`
+			Found        int     `json:"planted_found"`
+			SplitPlanted int     `json:"planted_split_across_chunks"`
+			SplitFound   int     `json:"split_found"`
+		} `json:"runs"`
+		Median    int     `json:"median_run"`
+		RecallPct float64 `json:"split_recall_pct"`
+	} `json:"sizes"`
+}
+
+func writeE10(b *strings.Builder, r *benchfmt.Result) {
+	var s e10Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: a %v-byte corpus streamed in %v; patterns are %v; %v. Holdback delay is %v.\n\n",
+		r.Params["corpus_bytes"], r.Params["chunks"], r.Params["patterns"], r.Params["planted"], r.Params["holdback_ms"])
+	b.WriteString("| Patterns | Throughput (MB/s) | Per-chunk time p50 / p99 (µs) | Holdback (runes) | Holdback delay at 50 tok/s (ms, derived) | Planted found | Split across chunks found | Recall |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, z := range s.Sizes {
+		m := z.Runs[z.Median]
+		var planted, found, sp, sf int
+		for _, run := range z.Runs {
+			planted += run.Planted
+			found += run.Found
+			sp += run.SplitPlanted
+			sf += run.SplitFound
+		}
+		fmt.Fprintf(b, "| %d | %.1f | %.1f / %.1f | %d | %.0f | %d / %d | %d / %d | %.2f%% |\n",
+			z.Patterns, m.MBPerSec, m.ChunkP50Ns/1000, m.ChunkP99Ns/1000, z.HoldbackRunes, z.HoldbackAt50, found, planted, sf, sp, z.RecallPct)
+	}
+	b.WriteString("\nPlanted and split counts are summed over all runs. Throughput is measured in a separate pass without per-chunk timers.\n\n")
 }
