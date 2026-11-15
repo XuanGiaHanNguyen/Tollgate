@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package tollgate.v1;
+
+option go_package = "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1;tollgatev1";
+
+// RateLimit is served by every gateway for the keys it owns on the hash ring.
+service RateLimitService {
+  // CheckLimits applies a batch of limit checks on the owner node. Results
+  // come back in request order.
+  rpc CheckLimits(CheckLimitsRequest) returns (CheckLimitsResponse);
+}
+
+enum Algorithm {
+  // Unspecified means the default, token bucket.
+  ALGORITHM_UNSPECIFIED = 0;
+  ALGORITHM_TOKEN_BUCKET = 1;
+  ALGORITHM_SLIDING_WINDOW = 2;
+}
+
+// Check carries the full limit parameters, so the owner applies what the
+// caller compiled even if the two run different rule versions.
+message Check {
+  int32 limit_id = 1;
+  string key = 2;
+  int64 count = 3;
+  int64 per_ns = 4;
+  Algorithm algorithm = 5;
+}
+
+message CheckLimitsRequest {
+  repeated Check checks = 1;
+}
+
+message CheckLimitsResponse {
+  repeated bool allowed = 1;
+}

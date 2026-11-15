@@ -1,0 +1,11 @@
+# Local plugins only (no remote BSR plugins). Install with:
+#   go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+#   go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: api/gen
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: api/gen
+    opt: paths=source_relative

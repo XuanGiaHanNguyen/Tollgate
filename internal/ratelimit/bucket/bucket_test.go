@@ -123,3 +123,81 @@ func BenchmarkAllowParallelKeys(b *testing.B) {
 		}
 	})
 }
+
+func TestSlidingWindow(t *testing.T) {
+	c := &clock{}
+	c.t.Store(int64(time.Minute)) // window-aligned start
+	s := New(c.now)
+	k := Key{1, "u"}
+	allow := func() bool { return s.AllowAlgo(k, 10, time.Minute, SlidingWindow) }
+	for i := 0; i < 10; i++ {
+		if !allow() {
+			t.Fatalf("request %d denied", i)
+		}
+	}
+	if allow() {
+		t.Fatal("11th request in the window allowed")
+	}
+	// Half-way into the next window the previous window still weighs 50%:
+	// estimate = 10*0.5 + 0 = 5, so 5 more are admitted.
+	c.advance(time.Minute + 30*time.Second)
+	n := 0
+	for allow() {
+		n++
+	}
+	if n != 5 {
+		t.Fatalf("admitted %d half-way into the next window, want 5", n)
+	}
+	// Two full windows later the history is gone.
+	c.advance(2 * time.Minute)
+	n = 0
+	for allow() {
+		n++
+	}
+	if n != 10 {
+		t.Fatalf("admitted %d after idle, want 10", n)
+	}
+}
+
+func TestSlidingWindowLongRunRate(t *testing.T) {
+	c := &clock{}
+	s := New(c.now)
+	allowed := 0
+	// 1000 req/s for 60s against 100/s; sliding windows have no burst
+	// allowance beyond the limit, so expect ~100 per second.
+	for i := 0; i < 60_000; i++ {
+		if s.AllowAlgo(Key{1, "k"}, 100, time.Second, SlidingWindow) {
+			allowed++
+		}
+		c.advance(time.Millisecond)
+	}
+	if allowed < 5900 || allowed > 6100 {
+		t.Fatalf("allowed %d, want ~6000", allowed)
+	}
+}
+
+func TestAlgorithmChangeResetsState(t *testing.T) {
+	s := New((&clock{}).now)
+	k := Key{1, "u"}
+	s.Allow(k, 1, time.Hour)
+	if s.Allow(k, 1, time.Hour) {
+		t.Fatal("token bucket not enforced")
+	}
+	if !s.AllowAlgo(k, 1, time.Hour, SlidingWindow) {
+		t.Fatal("state not reset when the algorithm changed")
+	}
+}
+
+func TestSweepSlidingWindow(t *testing.T) {
+	c := &clock{}
+	s := New(c.now)
+	s.AllowAlgo(Key{1, "a"}, 1, time.Second, SlidingWindow)
+	c.advance(time.Second)
+	if s.Sweep() != 0 {
+		t.Fatal("swept a window that still carries history")
+	}
+	c.advance(2 * time.Second)
+	if s.Sweep() != 1 {
+		t.Fatal("did not sweep an idle window")
+	}
+}
