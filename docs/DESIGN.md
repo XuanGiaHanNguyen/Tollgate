@@ -91,3 +91,56 @@ GitHub Actions: gofmt check, `go vet`, `staticcheck`, `go test -race` with cover
 - **E7 failure injection runs inside k6** (one-shot scenarios at fixed offsets), so the phase boundaries in k6's tagged metrics match the moment the backend changes. The runner timestamps the change by polling the backend, and timestamps breaker transitions by polling `/admin/upstreams` (10 ms resolution).
 - **Laptop noise.** The dev laptop runs other apps (load average 3–6 before benchmarks). Repeated identical runs at 1000 req/s through one gateway gave client p99 of 2.8, 13 and 37 ms, while the gateway's own overhead stayed ≤ 1.6 ms for every request and k6 dropped iterations, so the tail comes from scheduling on a shared machine, not the gateway. The E1 pass limit (p99 < 10 ms) was chosen in the plan before any data and was not changed. Instead, a 500 req/s level was added and every result now records the load average at start. AWS runs (M8) are the clean numbers.
 - **CI.** gofmt, vet, staticcheck v0.8.2, race tests with a coverage summary, binary build, and `docker build` per image. The first run on GitHub passed, which is the first check that the Dockerfile builds.
+
+## M3: Rule language — plan
+
+### Scope split: YAML vs rules
+YAML keeps infrastructure: listeners, upstreams, routes to upstreams, timeouts, retries. The rule file holds **policy**: auth, limits, deny, headers. A rule `route "<pattern>"` block selects which policy runs for a request path; it does not pick an upstream. (Upstreams move to the control plane in M6.)
+
+### Finalized grammar (EBNF)
+```
+program    = { letDecl | route } ;
+letDecl    = "let" IDENT "=" expr ;
+route      = "route" STRING "{" { stmt } "}" ;
+stmt       = "require" "auth"
+           | "when" expr "{" { stmt } "}"
+           | "limit" INT "per" unit "by" expr
+           | "deny" INT
+           | "set_header" STRING expr ;
+unit       = "second" | "minute" | "hour" | "day" ;
+expr       = binary | unary | primary ;
+binary     = expr op expr ;         (* Pratt; precedence low→high: || , && , == != , < <= > >= , + - , * / *)
+unary      = ( "!" | "-" ) expr ;
+primary    = INT | STRING | "true" | "false" | IDENT | field | call | "(" expr ")" ;
+field      = IDENT "." IDENT ;
+call       = IDENT "(" [ expr { "," expr } ] ")" ;
+```
+- Comments: `#` to end of line. Strings: double-quoted with `\" \\ \n \t` escapes.
+- Route pattern: `"/x/*"` matches `/x` and anything under it (segment-aware, like M1 prefixes); without `*` it matches exactly. The most specific route (longest literal prefix, exact beats wildcard) runs; only one route runs per request.
+
+### Semantics
+- Statements run in order. `deny N` ends evaluation with status N (400–599). `limit` statements accumulate, and every applicable limit must admit the request. `set_header` accumulates request headers added before proxying. `require auth` denies 401 if the request is not authenticated.
+- **Auth (M3 choice):** static API keys in the YAML (`auth.api_keys: [{key, user_id, tier}]`), sent as `Authorization: Bearer <key>`. This fills `user.id` and `user.tier`; unauthenticated requests see empty strings. Considered trusting `X-User-*` headers from an upstream identity proxy (simpler, but unsafe without one) and JWT (more work, no extra learning for this project). Swappable later.
+- **Fields:** `user.id`, `user.tier`, `client.ip`, `request.method`, `request.path`, `request.host` (all string). **Builtins:** `header(string) string`, `query(string) string`, `cidr_match(ip string, cidr string) bool`.
+- **Types:** `int`, `string`, `bool`. `== !=` need equal types; `< <= > >=` and `+ - * /` need ints; `&& || !` need bools; `when` needs bool; `limit … by` key must be string; `set_header` value must be string.
+- **Runtime errors** (division by zero, VM budget exceeded): fail closed with 500 and a counted metric. Constant division by zero is a compile error.
+
+### Pipeline (one package each under `internal/rules/`)
+1. `lexer`: hand-written, every token carries line:col.
+2. `parser`: recursive descent for statements, Pratt for expressions; on error, skips to the next statement or `}` and keeps going, so one pass reports several errors.
+3. `types`: resolves `let` (must be defined before use, no redefinition), fields and builtins; reports all errors with positions.
+4. `analysis`: (a) **shadowed rules**: a `when` block after an unconditional `deny`, or after `when C { deny … }` where its own condition implies `C` (syntactic implication: equal, or a conjunction containing `C`), can never have effect; (b) **route conflicts**: duplicate route patterns (error); overlapping patterns whose `limit`s on the same key and unit disagree (warning); (c) **instruction bound**: the language has no loops or backward jumps, so the longest path through a route's bytecode is at most its length; reject routes whose bound exceeds the VM budget; (d) unused `let` (warning).
+5. `opt`: inline `let`s, fold constants (arithmetic, comparisons, `&&`/`||` with a constant side, `!`), drop `when false` blocks, turn `when true { … }` into its body, remove statements after an unconditional `deny`.
+6. `compiler`: AST → `[]Instr{Op, Arg}` per route, with a constant pool. Opcodes: `PUSH_CONST LOAD_FIELD CALL_BUILTIN EQ NE LT LE GT GE ADD SUB MUL DIV NEG NOT JUMP JUMP_IF_FALSE AND/OR` (short-circuit via `JUMP_IF_FALSE`/`JUMP_IF_TRUE` + `POP`), `REQUIRE_AUTH LIMIT DENY SET_HEADER RETURN`.
+7. `vm`: stack machine with a fixed-size value stack in a pooled frame; values are a small tagged struct (no interfaces, no boxing). Header names are canonicalized at compile time, so `header()` is a direct map lookup with no allocation. Per-request instruction budget.
+8. `interp`: tree-walking evaluator over the same (optimized) AST, used as the E2 baseline and as the oracle in differential tests.
+
+### Testing
+Golden files under each package's `testdata/` (input `.tg`, expected tokens / AST dump / errors). Fuzz targets: lexer and parser never panic; VM never exceeds its budget. Differential test: a random generator of well-typed programs and requests; interpreter on the unoptimized AST, interpreter on the optimized AST, and the VM must give identical decisions.
+
+### Integration
+- `rules_file` in the gateway YAML. Compiled rules sit in an `atomic.Pointer` next to the router; a file watcher (mtime poll, 1 s) recompiles and swaps. On a compile error the old version keeps serving and the error is logged. `tollgate_config_version` increments on each swap. In-flight requests finish on the version they started with.
+- `limit` is enforced in M3 by a local in-memory token bucket per (route, limit, key). M4 replaces it with the distributed limiter. `tollgate_rule_eval_seconds{engine}` is recorded.
+
+### E2
+`bench/go/rules_bench_test.go`: 5 rule sets from small to large (generated deterministically), VM vs interpreter, `-benchmem`. `go run ./bench/run e2` runs it 3× (`-count=3`), takes the median, and writes the result file.
