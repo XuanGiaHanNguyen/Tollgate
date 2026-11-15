@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package tollgate.v1;
+
+option go_package = "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1;tollgatev1";
+
+// ControlService is the control plane's client API. Writes go to the
+// leader (a follower answers not_leader with the leader's address); reads
+// are linearizable (served by the leader after ReadIndex); watches can be
+// served by any node from its applied state.
+service ControlService {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+}
+
+message DeleteRequest {
+  string key = 1;
+}
+
+message PutResponse {
+  uint64 version = 1;
+  bool not_leader = 2;
+  string leader_addr = 3;
+}
+
+message DeleteResponse {
+  uint64 version = 1;
+  bool not_leader = 2;
+  string leader_addr = 3;
+}
+
+message GetRequest {
+  string key = 1;
+}
+
+message GetResponse {
+  bool found = 1;
+  bytes value = 2;
+  uint64 version = 3;
+  bool not_leader = 4;
+  string leader_addr = 5;
+}
+
+message WatchRequest {
+  // Send every change after this version (0 = from the beginning).
+  uint64 from_version = 1;
+}
+
+message Change {
+  uint64 version = 1;
+  string key = 2;
+  bytes value = 3;
+  bool deleted = 4;
+  int64 commit_ts_unix_nano = 5;
+}
+
+message WatchResponse {
+  // full: the watcher fell behind the retained history; changes is the
+  // complete current state and replaces everything the watcher had.
+  bool full = 1;
+  repeated Change changes = 2;
+  uint64 version = 3; // the node's version after these changes
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  uint64 id = 1;
+  string state = 2;
+  uint64 term = 3;
+  uint64 leader = 4;
+  string leader_addr = 5;
+  uint64 commit = 6;
+  uint64 applied = 7;
+  uint64 version = 8;
+  uint64 last_index = 9;
+  uint64 snapshot_index = 10;
+}
+
+// RaftService carries Raft messages between control-plane nodes.
+service RaftService {
+  rpc Send(SendRequest) returns (SendResponse);
+}
+
+message RaftEntry {
+  uint64 term = 1;
+  uint64 index = 2;
+  bytes data = 3;
+  bool noop = 4;
+}
+
+message RaftSnapshot {
+  uint64 index = 1;
+  uint64 term = 2;
+  bytes data = 3;
+}
+
+message RaftMessage {
+  int32 type = 1;
+  uint64 from = 2;
+  uint64 to = 3;
+  uint64 term = 4;
+  uint64 index = 5;
+  uint64 log_term = 6;
+  repeated RaftEntry entries = 7;
+  uint64 commit = 8;
+  bool reject = 9;
+  uint64 reject_hint = 10;
+  RaftSnapshot snapshot = 11;
+  bytes context = 12;
+}
+
+message SendRequest {
+  repeated RaftMessage messages = 1;
+}
+
+message SendResponse {}
