@@ -11,7 +11,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 | M1 Single-node gateway | done (compose run not yet verified) |
 | M2 Metrics and first numbers | done: see [`docs/METRICS.md`](docs/METRICS.md) |
 | M3 Rule language | done: bytecode VM 2.56× faster than a fair interpreter on large rule sets (goal was 3×; see METRICS.md) |
-| M4 Distributed rate limiting | not started |
+| M4 Distributed rate limiting | done: 3 gateways over-admit +0.07% vs the limit; limits hold when a node dies (see METRICS.md) |
 | M5 AI gateway | not started |
 | M6 Raft control plane | not started |
 | M7 Safe rollout | not started |
