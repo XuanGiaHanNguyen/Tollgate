@@ -182,3 +182,32 @@ Golden files under each package's `testdata/` (input `.tg`, expected tokens / AS
 - **Result** (`e2-20261115T045308Z.json`, clean tree at `18b89aa`): speedup 0.99× (xs), 1.85× (s), 2.39× (m), 2.50× (l), **2.56× (xl)**; both engines 0 allocs/eval. The spec example route went from 35 to 19 instructions.
 - **Goal (≥ 3× on large rule sets) still missed: 2.56×.** What remains in the VM profile is mostly work both engines must do: string compares on fields and headers, header map lookups, prefix containment. A bigger gap would need the interpreter to be worse, not the VM better. The xs set (2 statements, 16 instructions) stays at ~1× because fixed per-call cost dominates.
 - **History kept:** `e2-…032952Z` (1.5–2.05×, strawman interpreter), `e2-…033218Z` (dirty tree) and `e2-…033800Z` (0.90–1.01×, fair baseline before VM work) remain in `bench/results/`; METRICS.md shows the newest.
+
+## M4: Distributed rate limiting — plan
+
+### Packages
+- `internal/ratelimit/bucket`: token bucket (M3) plus a **sliding-window counter**: two fixed windows; the estimate is `prev × (1 − elapsed/per) + curr`, and a request is admitted while the estimate is below the limit. Same sharded store, with an algorithm per call.
+- `internal/ratelimit/ring`: consistent hash ring. FNV-1a 64 of `"<node>#<i>"` per virtual node (default 128), passed through a splitmix64 finalizer for an even spread. Points are sorted; `Owner(key)` is a binary search. The ring is immutable and swapped through an `atomic.Pointer` on membership change. It must be deterministic across processes, so it cannot use `maphash`, which is seeded per process.
+- `internal/ratelimit/peer`: the gRPC `CheckLimits` client and server. One **batcher** goroutine per peer collects checks and flushes at 100 checks or 500 µs, whichever comes first (both tunable; `max_batch: 1` disables batching). Each caller waits on its own pooled result channel, with a short timeout.
+- `internal/ratelimit` (`Limiter`): `Allow(ctx, LimitReq) → {allowed, degraded}`. Owner = `ring.Owner("<limitID>|<key>")`. If that's this node, check the local store. Otherwise check the peer, and if the peer fails or times out, fall back to a **separate** local store with the limit divided by the node count (at least 1), counted as degraded.
+- `api/proto/tollgate/v1/ratelimit.proto`, generated with `buf` into `api/gen/`, and the generated code committed so builds need no protoc.
+
+### Wire format
+`CheckRequest{repeated Check}`, where `Check{limit_id, key, count, per_ns, algorithm}`. The owner applies the parameters it receives, so a gateway that has already reloaded rules is not blocked by a peer still on the old version. `CheckResponse{repeated bool allowed}`, in the same order.
+
+### Rule language
+`limit 10 per minute by user.id using sliding_window`, where `using` is optional and token bucket is the default. It flows through AST → compiler `LimitInfo` → `env.LimitReq.Algo`, in both engines.
+
+### Membership (static until M6)
+YAML `cluster: {self, listen, vnodes, peers: [{name, addr}], batch: {max, flush}, peer_timeout}`. With no `cluster` block the limiter is purely local (M3 behavior).
+
+### Failure behavior and rebalancing
+- An unreachable owner falls back as above. There's no failure detector yet: each call pays at most `peer_timeout` (default 20 ms), so a dead peer costs latency until M6 membership removes it. Considered a circuit breaker per peer (reusing `internal/breaker`) to skip dead peers immediately, and adopted it: an open breaker goes straight to fallback.
+- When membership changes, only keys whose owner changed move, and their buckets start fresh on the new owner. Old state ages out through `Sweep`.
+
+### Metrics
+`tollgate_ratelimit_decisions_total{result=allow|deny|degraded,node}`, `tollgate_ratelimit_peer_rpc_seconds{peer}`, `tollgate_ratelimit_batch_size{peer}`.
+
+### Experiments
+- **E3** (laptop, local processes): one key, 3 gateways, k6 sends a known rate round-robin across them. Over-admission = (allowed − ideal) / ideal, where ideal = burst + limit × duration. Runs with batching and without (`max_batch: 1`). Also reports added p99 vs a single gateway enforcing locally, and peer RPCs per request (from metrics). A **kill run** sends traffic only to gw-1/gw-2 for a key owned by gw-3, kills gw-3 mid-run, and reports degraded decisions and over-admission.
+- **E4** (pure Go): 1M keys; add a 4th node to 3 and remove one from 4; vnodes ∈ {1, 16, 64, 128, 256}. Reports % of keys moved vs the ideal 1/N and the max/mean keys per node.
