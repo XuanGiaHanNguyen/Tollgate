@@ -26,7 +26,7 @@ make chaos-kill-backend-local  # kill a backend under load (no Docker needed)
 
 make bench-e1 && make report   # load test (k6), regenerate docs/METRICS.md
 
-make up                        # docker-compose: 1 gateway + 3 backends, Prometheus :9091, Grafana :3000
+make up                        # docker-compose: 3 gateways + 3 backends, Prometheus :9095, Grafana :3000
 curl localhost:8080/hello      # proxied; X-Backend header shows which backend
 curl localhost:9090/admin/upstreams
 make chaos-kill-backend        # same kill check against compose
