@@ -23,6 +23,75 @@ type Config struct {
 	Transport       Transport     `yaml:"transport"`
 	Upstreams       []Upstream    `yaml:"upstreams"`
 	Routes          []Route       `yaml:"routes"`
+	Rules           Rules         `yaml:"rules"`
+	Auth            Auth          `yaml:"auth"`
+	Cluster         *Cluster      `yaml:"cluster"` // nil: single-node limiting
+	AI              AI            `yaml:"ai"`
+	Control         *Control      `yaml:"control"` // rules from the control plane instead of rules.file
+}
+
+// Control points a gateway at the control plane (M6).
+type Control struct {
+	Endpoints []string `yaml:"endpoints"`  // client API addresses
+	CacheFile string   `yaml:"cache_file"` // last accepted rules, for restarts while the control plane is down
+}
+
+// AI configures model routes (M5).
+type AI struct {
+	ReservationTTL time.Duration       `yaml:"reservation_ttl"` // hold deadline for budget reservations
+	Pricing        map[string]Price    `yaml:"pricing"`         // per model; "*" is the default
+	PatternSets    map[string][]string `yaml:"pattern_sets"`    // named safety-filter phrase lists
+	HedgeMinSample int                 `yaml:"hedge_min_samples"`
+}
+
+// Price per 1,000 tokens in USD.
+type Price struct {
+	InputPer1K  float64 `yaml:"input_per_1k_usd"`
+	OutputPer1K float64 `yaml:"output_per_1k_usd"`
+}
+
+// Cluster configures distributed rate limiting (M4). Membership is static
+// until the control plane provides it (M6); every gateway lists all members.
+type Cluster struct {
+	Self        string          `yaml:"self"`   // this gateway's member name
+	Listen      string          `yaml:"listen"` // gRPC address for peer checks
+	VNodes      int             `yaml:"vnodes"`
+	PeerTimeout time.Duration   `yaml:"peer_timeout"`
+	Batch       Batch           `yaml:"batch"`
+	Members     []ClusterMember `yaml:"members"`
+}
+
+// Batch tunes peer-check batching. max: 1 disables it.
+type Batch struct {
+	Max   int           `yaml:"max"`
+	Flush time.Duration `yaml:"flush"`
+}
+
+// ClusterMember is one gateway.
+type ClusterMember struct {
+	Name string `yaml:"name"`
+	Addr string `yaml:"addr"`
+}
+
+// Rules points at the policy file written in the rule language (M3).
+type Rules struct {
+	File           string        `yaml:"file"`            // "" = no policy, every routed request is allowed
+	ReloadInterval time.Duration `yaml:"reload_interval"` // how often the file is checked for changes
+	Budget         int           `yaml:"budget"`          // VM instructions per evaluation
+	Engine         string        `yaml:"engine"`          // "vm" (default) or "interp"
+}
+
+// Auth holds static API keys (M3). A request is authenticated when it sends
+// "Authorization: Bearer <key>" with a listed key.
+type Auth struct {
+	APIKeys []APIKey `yaml:"api_keys"`
+}
+
+// APIKey maps a key to a user identity visible to rules.
+type APIKey struct {
+	Key    string `yaml:"key"`
+	UserID string `yaml:"user_id"`
+	Tier   string `yaml:"tier"`
 }
 
 // RetryBudget caps retries as a share of traffic.
@@ -82,6 +151,7 @@ type Breaker struct {
 // Route maps matching requests to an upstream.
 type Route struct {
 	Name     string   `yaml:"name"`
+	Type     string   `yaml:"type"` // "" (HTTP proxy) or "ai" (model API: budgets, hedging, safety filter)
 	Prefix   string   `yaml:"prefix"`
 	Host     string   `yaml:"host"`
 	Methods  []string `yaml:"methods"`
@@ -154,6 +224,35 @@ func (c *Config) setDefaults() {
 		t := true
 		c.Transport.ForceHTTP2 = &t
 	}
+	if c.AI.ReservationTTL == 0 {
+		c.AI.ReservationTTL = 2 * time.Minute
+	}
+	if c.AI.HedgeMinSample == 0 {
+		c.AI.HedgeMinSample = 20
+	}
+	if c.Rules.ReloadInterval == 0 {
+		c.Rules.ReloadInterval = time.Second
+	}
+	if c.Rules.Budget == 0 {
+		c.Rules.Budget = 10_000
+	}
+	if c.Rules.Engine == "" {
+		c.Rules.Engine = "vm"
+	}
+	if cl := c.Cluster; cl != nil {
+		if cl.VNodes == 0 {
+			cl.VNodes = 128
+		}
+		if cl.PeerTimeout == 0 {
+			cl.PeerTimeout = 20 * time.Millisecond
+		}
+		if cl.Batch.Max == 0 {
+			cl.Batch.Max = 100
+		}
+		if cl.Batch.Flush == 0 {
+			cl.Batch.Flush = 500 * time.Microsecond
+		}
+	}
 	for i := range c.Routes {
 		r := &c.Routes[i]
 		if r.Name == "" {
@@ -224,6 +323,61 @@ func (c *Config) Validate() error {
 	if len(c.Routes) == 0 {
 		add("at least one route is required")
 	}
+	if c.Control != nil {
+		if len(c.Control.Endpoints) == 0 {
+			add("control.endpoints is required")
+		}
+		if c.Rules.File != "" {
+			add("set either rules.file or control, not both")
+		}
+	}
+	if c.Rules.Engine != "vm" && c.Rules.Engine != "interp" {
+		add("rules.engine must be vm or interp, got %q", c.Rules.Engine)
+	}
+	if c.Rules.Budget < 0 {
+		add("rules.budget must be positive")
+	}
+	if cl := c.Cluster; cl != nil {
+		if cl.Listen == "" {
+			add("cluster.listen is required")
+		}
+		names := map[string]bool{}
+		for i, m := range cl.Members {
+			if m.Name == "" || m.Addr == "" {
+				add("cluster.members[%d]: name and addr are required", i)
+			}
+			if names[m.Name] {
+				add("cluster.members[%d]: duplicate member %q", i, m.Name)
+			}
+			names[m.Name] = true
+		}
+		if !names[cl.Self] {
+			add("cluster.self %q is not in cluster.members", cl.Self)
+		}
+		if cl.Batch.Max < 1 || cl.Batch.Max > 1000 {
+			add("cluster.batch.max must be in [1,1000]")
+		}
+	}
+	for model, p := range c.AI.Pricing {
+		if p.InputPer1K < 0 || p.OutputPer1K < 0 {
+			add("ai.pricing[%s]: prices must be >= 0", model)
+		}
+	}
+	for name, set := range c.AI.PatternSets {
+		if len(set) == 0 {
+			add("ai.pattern_sets[%s]: empty set", name)
+		}
+	}
+	keys := map[string]bool{}
+	for i, k := range c.Auth.APIKeys {
+		if k.Key == "" || k.UserID == "" {
+			add("auth.api_keys[%d]: key and user_id are required", i)
+		}
+		if keys[k.Key] {
+			add("auth.api_keys[%d]: duplicate key", i)
+		}
+		keys[k.Key] = true
+	}
 	type key struct{ prefix, host, methods string }
 	seen := map[key]bool{}
 	for i, r := range c.Routes {
@@ -236,6 +390,9 @@ func (c *Config) Validate() error {
 		}
 		if r.Retry.Attempts < 1 || r.Retry.Attempts > 10 {
 			add("%s: retry.attempts must be in [1,10]", where)
+		}
+		if r.Type != "" && r.Type != "ai" {
+			add("%s: type must be empty or \"ai\", got %q", where, r.Type)
 		}
 		k := key{r.Prefix, r.Host, strings.Join(r.Methods, ",")}
 		if seen[k] {

@@ -1,0 +1,16 @@
+(let a (- (+ 1 (* 2 3)) (/ (- 4) 2)))
+(let b (|| (&& (! x) y) (&& (== z "q") (< 1 2))))
+(let c (* (+ 1 2) 3))
+(let d (|| (call cidr_match client.ip "10.0.0.0/8") (call f)))
+(route "/x"
+  (when (> a 1)
+    (when b
+      (set_header "X-A" "1")
+    )
+  )
+  (deny 429)
+)
+(route "/algo"
+  (limit#0 5 per second by client.ip using sliding_window)
+  (limit#1 6 per second by client.ip)
+)

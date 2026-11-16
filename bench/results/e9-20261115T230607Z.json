@@ -1,0 +1,363 @@
+{
+  "experiment": "E9",
+  "started_at": "2026-11-15T23:06:07.207154Z",
+  "finished_at": "2026-11-15T23:20:36.17907Z",
+  "env": {
+    "mode": "laptop",
+    "git_commit": "ceb057203c9a8d1690e2b26604b8d9604960518b",
+    "git_dirty": false,
+    "machine": "Mac14,15",
+    "cpu": "Apple M2",
+    "cpus": 8,
+    "memory_gb": 16,
+    "os": "darwin/arm64",
+    "go_version": "go1.27.4",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 1,
+    "topology": "local processes on one machine; k6, gateways and backends share its CPUs",
+    "load_avg_1m_at_start": "2.58",
+    "power": "battery"
+  },
+  "params": {
+    "cost": "true cost from both providers' billing at $1/1K input, $3/1K output; a cancelled hedge is billed its prompt",
+    "hedge": "after the primary's p95 TTFT (rolling 256-sample window, \u003e= 20 samples)",
+    "measure_seconds": 60,
+    "providers": "2 x mockllm, TTFT log-normal median 100ms sigma 0.3, 5% of requests x10 (heavy tail), 500 tok/s",
+    "rate": 40,
+    "reps": 3,
+    "request": "max_tokens 20, ~10-word prompt, streaming",
+    "ttft": "measured by the client to the first content event",
+    "warmup_s": 10,
+    "warmup_seconds": 10
+  },
+  "summary": {
+    "modes": [
+      {
+        "name": "off",
+        "hedge_max_pct": 0,
+        "runs": [
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 102.82,
+            "ttft_p95_ms": 206.33,
+            "ttft_p99_ms": 1284.81,
+            "cost_per_request_micro_usd": 73150,
+            "hedges": 0,
+            "hedges_won": 0,
+            "hedge_rate_pct": 0,
+            "provider_calls": 2400
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 102.2,
+            "ttft_p95_ms": 520.94,
+            "ttft_p99_ms": 1321.95,
+            "cost_per_request_micro_usd": 73150,
+            "hedges": 0,
+            "hedges_won": 0,
+            "hedge_rate_pct": 0,
+            "provider_calls": 2400
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 104.93,
+            "ttft_p95_ms": 753.25,
+            "ttft_p99_ms": 1291.11,
+            "cost_per_request_micro_usd": 73200,
+            "hedges": 0,
+            "hedges_won": 0,
+            "hedge_rate_pct": 0,
+            "provider_calls": 2400
+          }
+        ],
+        "median_run": 2,
+        "extra_cost_pct_vs_off": 0,
+        "ttft_p99_change_pct_vs_off": 0
+      },
+      {
+        "name": "hedge_1pct",
+        "hedge_max_pct": 1,
+        "runs": [
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 103.03,
+            "ttft_p95_ms": 206.8,
+            "ttft_p99_ms": 1118.08,
+            "cost_per_request_micro_usd": 73280,
+            "hedges": 24,
+            "hedges_won": 22,
+            "hedge_rate_pct": 1,
+            "provider_calls": 2424
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 102.4,
+            "ttft_p95_ms": 288.9,
+            "ttft_p99_ms": 1205.33,
+            "cost_per_request_micro_usd": 73285.42,
+            "hedges": 25,
+            "hedges_won": 22,
+            "hedge_rate_pct": 1.042,
+            "provider_calls": 2425
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 105.17,
+            "ttft_p95_ms": 419.45,
+            "ttft_p99_ms": 1263.66,
+            "cost_per_request_micro_usd": 73335.42,
+            "hedges": 25,
+            "hedges_won": 22,
+            "hedge_rate_pct": 1.042,
+            "provider_calls": 2425
+          }
+        ],
+        "median_run": 1,
+        "extra_cost_pct_vs_off": 0.12,
+        "ttft_p99_change_pct_vs_off": -6.64
+      },
+      {
+        "name": "hedge_5pct",
+        "hedge_max_pct": 5,
+        "runs": [
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 102.85,
+            "ttft_p95_ms": 206.56,
+            "ttft_p99_ms": 382.95,
+            "cost_per_request_micro_usd": 73821.67,
+            "hedges": 125,
+            "hedges_won": 93,
+            "hedge_rate_pct": 5.208,
+            "provider_calls": 2524
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 102.29,
+            "ttft_p95_ms": 260.01,
+            "ttft_p99_ms": 659.93,
+            "cost_per_request_micro_usd": 73764.17,
+            "hedges": 119,
+            "hedges_won": 100,
+            "hedge_rate_pct": 4.958,
+            "provider_calls": 2518
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 105.21,
+            "ttft_p95_ms": 307.49,
+            "ttft_p99_ms": 710.45,
+            "cost_per_request_micro_usd": 73789.17,
+            "hedges": 118,
+            "hedges_won": 116,
+            "hedge_rate_pct": 4.917,
+            "provider_calls": 2518
+          }
+        ],
+        "median_run": 1,
+        "extra_cost_pct_vs_off": 0.77,
+        "ttft_p99_change_pct_vs_off": -48.89
+      },
+      {
+        "name": "hedge_10pct",
+        "hedge_max_pct": 10,
+        "runs": [
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 103.02,
+            "ttft_p95_ms": 206.57,
+            "ttft_p99_ms": 396.39,
+            "cost_per_request_micro_usd": 73859.58,
+            "hedges": 132,
+            "hedges_won": 96,
+            "hedge_rate_pct": 5.5,
+            "provider_calls": 2531
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 102.45,
+            "ttft_p95_ms": 258.31,
+            "ttft_p99_ms": 534.57,
+            "cost_per_request_micro_usd": 73845.42,
+            "hedges": 133,
+            "hedges_won": 116,
+            "hedge_rate_pct": 5.542,
+            "provider_calls": 2533
+          },
+          {
+            "requests": 2400,
+            "ok": 2400,
+            "ttft_p50_ms": 105.09,
+            "ttft_p95_ms": 303.02,
+            "ttft_p99_ms": 544.5,
+            "cost_per_request_micro_usd": 73886.67,
+            "hedges": 136,
+            "hedges_won": 130,
+            "hedge_rate_pct": 5.667,
+            "provider_calls": 2536
+          }
+        ],
+        "median_run": 1,
+        "extra_cost_pct_vs_off": 0.88,
+        "ttft_p99_change_pct_vs_off": -58.6
+      }
+    ]
+  },
+  "raw": {
+    "hedge_10pct/0": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 103.02,
+      "ttft_p95_ms": 206.57,
+      "ttft_p99_ms": 396.39,
+      "cost_per_request_micro_usd": 73859.58,
+      "hedges": 132,
+      "hedges_won": 96,
+      "hedge_rate_pct": 5.5,
+      "provider_calls": 2531
+    },
+    "hedge_10pct/1": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 102.45,
+      "ttft_p95_ms": 258.31,
+      "ttft_p99_ms": 534.57,
+      "cost_per_request_micro_usd": 73845.42,
+      "hedges": 133,
+      "hedges_won": 116,
+      "hedge_rate_pct": 5.542,
+      "provider_calls": 2533
+    },
+    "hedge_10pct/2": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 105.09,
+      "ttft_p95_ms": 303.02,
+      "ttft_p99_ms": 544.5,
+      "cost_per_request_micro_usd": 73886.67,
+      "hedges": 136,
+      "hedges_won": 130,
+      "hedge_rate_pct": 5.667,
+      "provider_calls": 2536
+    },
+    "hedge_1pct/0": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 103.03,
+      "ttft_p95_ms": 206.8,
+      "ttft_p99_ms": 1118.08,
+      "cost_per_request_micro_usd": 73280,
+      "hedges": 24,
+      "hedges_won": 22,
+      "hedge_rate_pct": 1,
+      "provider_calls": 2424
+    },
+    "hedge_1pct/1": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 102.4,
+      "ttft_p95_ms": 288.9,
+      "ttft_p99_ms": 1205.33,
+      "cost_per_request_micro_usd": 73285.42,
+      "hedges": 25,
+      "hedges_won": 22,
+      "hedge_rate_pct": 1.042,
+      "provider_calls": 2425
+    },
+    "hedge_1pct/2": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 105.17,
+      "ttft_p95_ms": 419.45,
+      "ttft_p99_ms": 1263.66,
+      "cost_per_request_micro_usd": 73335.42,
+      "hedges": 25,
+      "hedges_won": 22,
+      "hedge_rate_pct": 1.042,
+      "provider_calls": 2425
+    },
+    "hedge_5pct/0": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 102.85,
+      "ttft_p95_ms": 206.56,
+      "ttft_p99_ms": 382.95,
+      "cost_per_request_micro_usd": 73821.67,
+      "hedges": 125,
+      "hedges_won": 93,
+      "hedge_rate_pct": 5.208,
+      "provider_calls": 2524
+    },
+    "hedge_5pct/1": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 102.29,
+      "ttft_p95_ms": 260.01,
+      "ttft_p99_ms": 659.93,
+      "cost_per_request_micro_usd": 73764.17,
+      "hedges": 119,
+      "hedges_won": 100,
+      "hedge_rate_pct": 4.958,
+      "provider_calls": 2518
+    },
+    "hedge_5pct/2": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 105.21,
+      "ttft_p95_ms": 307.49,
+      "ttft_p99_ms": 710.45,
+      "cost_per_request_micro_usd": 73789.17,
+      "hedges": 118,
+      "hedges_won": 116,
+      "hedge_rate_pct": 4.917,
+      "provider_calls": 2518
+    },
+    "off/0": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 102.82,
+      "ttft_p95_ms": 206.33,
+      "ttft_p99_ms": 1284.81,
+      "cost_per_request_micro_usd": 73150,
+      "hedges": 0,
+      "hedges_won": 0,
+      "hedge_rate_pct": 0,
+      "provider_calls": 2400
+    },
+    "off/1": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 102.2,
+      "ttft_p95_ms": 520.94,
+      "ttft_p99_ms": 1321.95,
+      "cost_per_request_micro_usd": 73150,
+      "hedges": 0,
+      "hedges_won": 0,
+      "hedge_rate_pct": 0,
+      "provider_calls": 2400
+    },
+    "off/2": {
+      "requests": 2400,
+      "ok": 2400,
+      "ttft_p50_ms": 104.93,
+      "ttft_p95_ms": 753.25,
+      "ttft_p99_ms": 1291.11,
+      "cost_per_request_micro_usd": 73200,
+      "hedges": 0,
+      "hedges_won": 0,
+      "hedge_rate_pct": 0,
+      "provider_calls": 2400
+    }
+  }
+}

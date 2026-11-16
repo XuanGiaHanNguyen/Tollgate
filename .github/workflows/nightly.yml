@@ -1,0 +1,23 @@
+name: nightly-sim
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: deterministic simulation, 5000 seeds (KV and config store)
+        run: go test -count=1 -timeout 90m -run 'TestSeeds' ./internal/sim -args -seeds 5000
+      - name: mutation check (planted Raft bugs must be caught)
+        run: python3 bench/sim/mutants.py 3000

@@ -1,0 +1,237 @@
+{
+  "experiment": "E5",
+  "started_at": "2026-11-16T00:25:10.038394Z",
+  "finished_at": "2026-11-16T00:29:55.663727Z",
+  "env": {
+    "mode": "laptop",
+    "git_commit": "ca83380872d551594aa1b0bcbfb40c3a90f06eb7",
+    "git_dirty": false,
+    "machine": "Mac14,15",
+    "cpu": "Apple M2",
+    "cpus": 8,
+    "memory_gb": 16,
+    "os": "darwin/arm64",
+    "go_version": "go1.27.4",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 3,
+    "topology": "local processes: 3 tollgate-control nodes",
+    "load_avg_1m_at_start": "3.74",
+    "power": "battery"
+  },
+  "params": {
+    "commit_latency": "client-side Put latency, sequential writes, leader stable, measured window after warm-up",
+    "failover": "10 SIGKILLs of the leader per run while a writer keeps writing (retrying every 5ms); 'first write' counts only writes started after the kill; the killed node is restarted between kills",
+    "loss_check": "every acknowledged write (unique key) read back linearizably at the end of the run",
+    "measure_seconds": 60,
+    "nodes": 3,
+    "reps": 3,
+    "storage": "WAL with fsync (F_FULLFSYNC on macOS) on every Raft Ready",
+    "tick": "50ms (election timeout 500-1000ms, pre-vote on)",
+    "warmup_seconds": 10
+  },
+  "summary": {
+    "median_run": 2,
+    "runs": [
+      {
+        "writes": 4124,
+        "commit_p50_ms": 14.325,
+        "commit_p99_ms": 24.029,
+        "failover_ms": [
+          655.8,
+          675.7,
+          545.9,
+          525.1,
+          548.2,
+          920.3,
+          582.3,
+          530.2,
+          545.8,
+          912.4
+        ],
+        "new_leader_ms": [
+          537.5,
+          583.3,
+          524.3,
+          499.3,
+          521.2,
+          894,
+          559.5,
+          502.5,
+          519.6,
+          880.8
+        ],
+        "failover_p50_ms": 582.3,
+        "failover_max_ms": 920.3,
+        "acknowledged_writes": 5799,
+        "lost_entries": 0
+      },
+      {
+        "writes": 4333,
+        "commit_p50_ms": 13.621,
+        "commit_p99_ms": 25.251,
+        "failover_ms": [
+          642.9,
+          657.7,
+          778.7,
+          915.9,
+          498.3,
+          854.4,
+          971.9,
+          676.2,
+          552.8,
+          903.7
+        ],
+        "new_leader_ms": [
+          543.7,
+          553.8,
+          715.4,
+          872,
+          470.4,
+          826.8,
+          947.1,
+          648.7,
+          530.6,
+          878.6
+        ],
+        "failover_p50_ms": 778.7,
+        "failover_max_ms": 971.9,
+        "acknowledged_writes": 5930,
+        "lost_entries": 0
+      },
+      {
+        "writes": 4353,
+        "commit_p50_ms": 13.506,
+        "commit_p99_ms": 25.2,
+        "failover_ms": [
+          678.1,
+          626.6,
+          541.7,
+          508.8,
+          545.3,
+          845.8,
+          548,
+          775.1,
+          560.3,
+          506.5
+        ],
+        "new_leader_ms": [
+          576,
+          516.7,
+          522.1,
+          488,
+          525.6,
+          823.1,
+          521.6,
+          750.8,
+          530.4,
+          478.8
+        ],
+        "failover_p50_ms": 560.3,
+        "failover_max_ms": 845.8,
+        "acknowledged_writes": 6113,
+        "lost_entries": 0
+      }
+    ]
+  },
+  "raw": [
+    {
+      "writes": 4124,
+      "commit_p50_ms": 14.325,
+      "commit_p99_ms": 24.029,
+      "failover_ms": [
+        655.8,
+        675.7,
+        545.9,
+        525.1,
+        548.2,
+        920.3,
+        582.3,
+        530.2,
+        545.8,
+        912.4
+      ],
+      "new_leader_ms": [
+        537.5,
+        583.3,
+        524.3,
+        499.3,
+        521.2,
+        894,
+        559.5,
+        502.5,
+        519.6,
+        880.8
+      ],
+      "failover_p50_ms": 582.3,
+      "failover_max_ms": 920.3,
+      "acknowledged_writes": 5799,
+      "lost_entries": 0
+    },
+    {
+      "writes": 4333,
+      "commit_p50_ms": 13.621,
+      "commit_p99_ms": 25.251,
+      "failover_ms": [
+        642.9,
+        657.7,
+        778.7,
+        915.9,
+        498.3,
+        854.4,
+        971.9,
+        676.2,
+        552.8,
+        903.7
+      ],
+      "new_leader_ms": [
+        543.7,
+        553.8,
+        715.4,
+        872,
+        470.4,
+        826.8,
+        947.1,
+        648.7,
+        530.6,
+        878.6
+      ],
+      "failover_p50_ms": 778.7,
+      "failover_max_ms": 971.9,
+      "acknowledged_writes": 5930,
+      "lost_entries": 0
+    },
+    {
+      "writes": 4353,
+      "commit_p50_ms": 13.506,
+      "commit_p99_ms": 25.2,
+      "failover_ms": [
+        678.1,
+        626.6,
+        541.7,
+        508.8,
+        545.3,
+        845.8,
+        548,
+        775.1,
+        560.3,
+        506.5
+      ],
+      "new_leader_ms": [
+        576,
+        516.7,
+        522.1,
+        488,
+        525.6,
+        823.1,
+        521.6,
+        750.8,
+        530.4,
+        478.8
+      ],
+      "failover_p50_ms": 560.3,
+      "failover_max_ms": 845.8,
+      "acknowledged_writes": 6113,
+      "lost_entries": 0
+    }
+  ]
+}

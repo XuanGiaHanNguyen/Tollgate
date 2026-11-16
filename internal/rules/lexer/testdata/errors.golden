@@ -1,0 +1,38 @@
+1:1 let
+1:5 IDENT(x)
+1:7 =
+1:9 INT(1)
+1:11 ILLEGAL(@)
+1:13 INT(2)
+2:1 let
+2:5 IDENT(y)
+2:7 =
+2:9 ILLEGAL(99999999999999999999)
+3:1 let
+3:5 IDENT(z)
+3:7 =
+3:9 ILLEGAL(10abc)
+4:1 let
+4:5 IDENT(s)
+4:7 =
+4:9 STRING("bad  escape")
+5:1 let
+5:5 IDENT(a)
+5:7 =
+5:9 IDENT(b)
+5:11 ILLEGAL(&)
+5:13 IDENT(c)
+5:15 ILLEGAL(|)
+5:17 IDENT(d)
+6:1 let
+6:5 IDENT(u)
+6:7 =
+6:9 ILLEGAL(unterminated)
+7:1 EOF
+1:11: error: lexer: unexpected character "@"
+2:9: error: lexer: integer 99999999999999999999 out of range
+3:9: error: lexer: malformed number "10abc"
+4:14: error: lexer: unknown escape \q
+5:11: error: lexer: unexpected character "&"
+5:15: error: lexer: unexpected character "|"
+6:9: error: lexer: unterminated string

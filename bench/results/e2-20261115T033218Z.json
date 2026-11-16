@@ -1,0 +1,163 @@
+{
+  "experiment": "E2",
+  "started_at": "2026-11-15T03:32:18.337333Z",
+  "finished_at": "2026-11-15T03:33:03.209325Z",
+  "env": {
+    "mode": "laptop",
+    "git_commit": "9993ed335ed8d653f3379714f6f4df865beca9f7",
+    "git_dirty": true,
+    "machine": "Mac14,15",
+    "cpu": "Apple M2",
+    "cpus": 8,
+    "memory_gb": 16,
+    "os": "darwin/arm64",
+    "go_version": "go1.26.0",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 1,
+    "topology": "single process (go test)",
+    "load_avg_1m_at_start": "10.50",
+    "power": "AC"
+  },
+  "params": {
+    "benchmark": "go test ./bench/go -bench E2 -benchmem",
+    "gate": "TestE2EnginesAgree and internal/rules TestDifferential must pass first",
+    "reps": 3,
+    "sizes": "xs=2, s=10, m=50, l=200, xl=1000 conditional statements in the evaluated route"
+  },
+  "summary": {
+    "engines_agree": true,
+    "sizes": [
+      {
+        "name": "xs",
+        "stmts": 2,
+        "bytecode_instrs": 26,
+        "vm": {
+          "ns_per_op": 131.6,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            131.5,
+            131.6,
+            134
+          ]
+        },
+        "interp": {
+          "ns_per_op": 112.6,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            111.4,
+            112.6,
+            120.1
+          ]
+        },
+        "speedup": 0.86
+      },
+      {
+        "name": "s",
+        "stmts": 10,
+        "bytecode_instrs": 126,
+        "vm": {
+          "ns_per_op": 463.9,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            458.3,
+            463.9,
+            481.3
+          ]
+        },
+        "interp": {
+          "ns_per_op": 457.1,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            444,
+            457.1,
+            461.9
+          ]
+        },
+        "speedup": 0.99
+      },
+      {
+        "name": "m",
+        "stmts": 50,
+        "bytecode_instrs": 626,
+        "vm": {
+          "ns_per_op": 2099,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            2077,
+            2099,
+            2123
+          ]
+        },
+        "interp": {
+          "ns_per_op": 2102,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            2093,
+            2102,
+            2163
+          ]
+        },
+        "speedup": 1
+      },
+      {
+        "name": "l",
+        "stmts": 200,
+        "bytecode_instrs": 2504,
+        "vm": {
+          "ns_per_op": 8157,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            8034,
+            8157,
+            8241
+          ]
+        },
+        "interp": {
+          "ns_per_op": 8308,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            8078,
+            8308,
+            8344
+          ]
+        },
+        "speedup": 1.02
+      },
+      {
+        "name": "xl",
+        "stmts": 1000,
+        "bytecode_instrs": 12504,
+        "vm": {
+          "ns_per_op": 39904,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            39660,
+            39904,
+            40510
+          ]
+        },
+        "interp": {
+          "ns_per_op": 41140,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0,
+          "all_ns_per_op": [
+            40148,
+            41140,
+            41747
+          ]
+        },
+        "speedup": 1.03
+      }
+    ]
+  },
+  "raw": "goos: darwin\ngoarch: arm64\npkg: github.com/XuanGiaHanNguyen/Tollgate/bench/go\ncpu: Apple M2\nBenchmarkE2/size=xs/engine=vm-8         \t 8326536\t       131.5 ns/op\t        26.00 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xs/engine=vm-8         \t 9169850\t       131.6 ns/op\t        26.00 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xs/engine=vm-8         \t 9241372\t       134.0 ns/op\t        26.00 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xs/engine=interp-8     \t10605952\t       111.4 ns/op\t        26.00 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xs/engine=interp-8     \t10912947\t       112.6 ns/op\t        26.00 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xs/engine=interp-8     \t10520305\t       120.1 ns/op\t        26.00 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=s/engine=vm-8          \t 2582965\t       463.9 ns/op\t       126.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=s/engine=vm-8          \t 2613553\t       481.3 ns/op\t       126.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=s/engine=vm-8          \t 2577316\t       458.3 ns/op\t       126.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=s/engine=interp-8      \t 2684042\t       461.9 ns/op\t       126.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=s/engine=interp-8      \t 2713564\t       444.0 ns/op\t       126.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=s/engine=interp-8      \t 2658758\t       457.1 ns/op\t       126.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=m/engine=vm-8          \t  571186\t      2077 ns/op\t       626.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=m/engine=vm-8          \t  577459\t      2099 ns/op\t       626.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=m/engine=vm-8          \t  581300\t      2123 ns/op\t       626.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=m/engine=interp-8      \t  565027\t      2102 ns/op\t       626.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=m/engine=interp-8      \t  555303\t      2163 ns/op\t       626.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=m/engine=interp-8      \t  567955\t      2093 ns/op\t       626.0 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=l/engine=vm-8          \t  150186\t      8034 ns/op\t      2504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=l/engine=vm-8          \t  148849\t      8241 ns/op\t      2504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=l/engine=vm-8          \t  149930\t      8157 ns/op\t      2504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=l/engine=interp-8      \t  145963\t      8308 ns/op\t      2504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=l/engine=interp-8      \t  146047\t      8344 ns/op\t      2504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=l/engine=interp-8      \t  147462\t      8078 ns/op\t      2504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xl/engine=vm-8         \t   28987\t     39904 ns/op\t     12504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xl/engine=vm-8         \t   30111\t     39660 ns/op\t     12504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xl/engine=vm-8         \t   29930\t     40510 ns/op\t     12504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xl/engine=interp-8     \t   30266\t     41747 ns/op\t     12504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xl/engine=interp-8     \t   29560\t     41140 ns/op\t     12504 instrs\t       0 B/op\t       0 allocs/op\nBenchmarkE2/size=xl/engine=interp-8     \t   27228\t     40148 ns/op\t     12504 instrs\t       0 B/op\t       0 allocs/op\nPASS\nok  \tgithub.com/XuanGiaHanNguyen/Tollgate/bench/go\t43.318s\n"
+}

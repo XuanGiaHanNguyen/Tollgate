@@ -1,0 +1,15 @@
+let body = "x"
+route "/a" {
+  providers ["p1", "p1"]
+  hedge after p95 max 150%
+  block_patterns "s" action shout
+  when user.id == "x" { providers ["p2"] }
+  budget 1.00 usd per day by request.max_tokens
+  when request.max_tokens == "big" { deny 400 }
+  when tokens.estimate(5) > 1 { deny 400 }
+}
+route "/b" {
+  hedge after p99 max 5%
+  providers ["only-one"]
+  providers ["again"]
+}

@@ -1,0 +1,17 @@
+let = 5
+route "/a" {
+  limit per minute by user.id
+  deny "403"
+  require admin
+  when { deny 403 }
+  limit 10 per fortnight by user.id
+  set_header "X" (1 +
+  deny 404
+}
+route "/b" {
+  limit 10 per minute by user.id
+banana
+route "/c" { deny 403 }
+route "/bad-algo" {
+  limit 5 per second by client.ip using leaky_bucket
+}

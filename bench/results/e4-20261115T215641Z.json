@@ -1,0 +1,241 @@
+{
+  "experiment": "E4",
+  "started_at": "2026-11-15T21:56:41.783675Z",
+  "finished_at": "2026-11-15T21:56:42.145238Z",
+  "env": {
+    "mode": "laptop",
+    "git_commit": "644393d279dce0fb95cd7c9f3dc822cb89c896bd",
+    "git_dirty": false,
+    "machine": "Mac14,15",
+    "cpu": "Apple M2",
+    "cpus": 8,
+    "memory_gb": 16,
+    "os": "darwin/arm64",
+    "go_version": "go1.27.4",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 4,
+    "topology": "single process (pure computation, deterministic)",
+    "load_avg_1m_at_start": "3.00",
+    "power": "battery"
+  },
+  "params": {
+    "hash": "FNV-1a 64 + splitmix64 finalizer",
+    "key_format": "\u003climitID\u003e|user-\u003cn\u003e",
+    "keys": 1000000,
+    "reps": 1,
+    "scenarios": "add gw-4 to {gw-1..gw-3}; remove gw-4 from {gw-1..gw-4}",
+    "vnodes": [
+      1,
+      16,
+      64,
+      128,
+      256
+    ]
+  },
+  "summary": {
+    "rows": [
+      {
+        "vnodes": 1,
+        "add_moved_pct": 12.687,
+        "add_wrong_moves": 0,
+        "remove_moved_pct": 12.687,
+        "remove_wrong_moves": 0,
+        "ideal_pct": 25,
+        "spread_3_nodes": {
+          "nodes": 3,
+          "max_over_mean": 1.5358,
+          "min_over_mean": 0.6717,
+          "stddev_pct_of_mean": 38.21
+        },
+        "spread_4_nodes": {
+          "nodes": 4,
+          "max_over_mean": 2.0478,
+          "min_over_mean": 0.3882,
+          "stddev_pct_of_mean": 65.54
+        }
+      },
+      {
+        "vnodes": 16,
+        "add_moved_pct": 30.947,
+        "add_wrong_moves": 0,
+        "remove_moved_pct": 30.947,
+        "remove_wrong_moves": 0,
+        "ideal_pct": 25,
+        "spread_3_nodes": {
+          "nodes": 3,
+          "max_over_mean": 1.1778,
+          "min_over_mean": 0.7419,
+          "stddev_pct_of_mean": 18.68
+        },
+        "spread_4_nodes": {
+          "nodes": 4,
+          "max_over_mean": 1.2379,
+          "min_over_mean": 0.8782,
+          "stddev_pct_of_mean": 14.37
+        }
+      },
+      {
+        "vnodes": 64,
+        "add_moved_pct": 18.032,
+        "add_wrong_moves": 0,
+        "remove_moved_pct": 18.032,
+        "remove_wrong_moves": 0,
+        "ideal_pct": 25,
+        "spread_3_nodes": {
+          "nodes": 3,
+          "max_over_mean": 1.0928,
+          "min_over_mean": 0.8562,
+          "stddev_pct_of_mean": 10.31
+        },
+        "spread_4_nodes": {
+          "nodes": 4,
+          "max_over_mean": 1.16,
+          "min_over_mean": 0.7213,
+          "stddev_pct_of_mean": 17.44
+        }
+      },
+      {
+        "vnodes": 128,
+        "add_moved_pct": 23.529,
+        "add_wrong_moves": 0,
+        "remove_moved_pct": 23.529,
+        "remove_wrong_moves": 0,
+        "ideal_pct": 25,
+        "spread_3_nodes": {
+          "nodes": 3,
+          "max_over_mean": 1.0831,
+          "min_over_mean": 0.9536,
+          "stddev_pct_of_mean": 5.89
+        },
+        "spread_4_nodes": {
+          "nodes": 4,
+          "max_over_mean": 1.1254,
+          "min_over_mean": 0.8691,
+          "stddev_pct_of_mean": 10.06
+        }
+      },
+      {
+        "vnodes": 256,
+        "add_moved_pct": 23.807,
+        "add_wrong_moves": 0,
+        "remove_moved_pct": 23.807,
+        "remove_wrong_moves": 0,
+        "ideal_pct": 25,
+        "spread_3_nodes": {
+          "nodes": 3,
+          "max_over_mean": 1.0422,
+          "min_over_mean": 0.9662,
+          "stddev_pct_of_mean": 3.16
+        },
+        "spread_4_nodes": {
+          "nodes": 4,
+          "max_over_mean": 1.0445,
+          "min_over_mean": 0.9523,
+          "stddev_pct_of_mean": 3.32
+        }
+      }
+    ]
+  },
+  "raw": [
+    {
+      "vnodes": 1,
+      "add_moved_pct": 12.687,
+      "add_wrong_moves": 0,
+      "remove_moved_pct": 12.687,
+      "remove_wrong_moves": 0,
+      "ideal_pct": 25,
+      "spread_3_nodes": {
+        "nodes": 3,
+        "max_over_mean": 1.5358,
+        "min_over_mean": 0.6717,
+        "stddev_pct_of_mean": 38.21
+      },
+      "spread_4_nodes": {
+        "nodes": 4,
+        "max_over_mean": 2.0478,
+        "min_over_mean": 0.3882,
+        "stddev_pct_of_mean": 65.54
+      }
+    },
+    {
+      "vnodes": 16,
+      "add_moved_pct": 30.947,
+      "add_wrong_moves": 0,
+      "remove_moved_pct": 30.947,
+      "remove_wrong_moves": 0,
+      "ideal_pct": 25,
+      "spread_3_nodes": {
+        "nodes": 3,
+        "max_over_mean": 1.1778,
+        "min_over_mean": 0.7419,
+        "stddev_pct_of_mean": 18.68
+      },
+      "spread_4_nodes": {
+        "nodes": 4,
+        "max_over_mean": 1.2379,
+        "min_over_mean": 0.8782,
+        "stddev_pct_of_mean": 14.37
+      }
+    },
+    {
+      "vnodes": 64,
+      "add_moved_pct": 18.032,
+      "add_wrong_moves": 0,
+      "remove_moved_pct": 18.032,
+      "remove_wrong_moves": 0,
+      "ideal_pct": 25,
+      "spread_3_nodes": {
+        "nodes": 3,
+        "max_over_mean": 1.0928,
+        "min_over_mean": 0.8562,
+        "stddev_pct_of_mean": 10.31
+      },
+      "spread_4_nodes": {
+        "nodes": 4,
+        "max_over_mean": 1.16,
+        "min_over_mean": 0.7213,
+        "stddev_pct_of_mean": 17.44
+      }
+    },
+    {
+      "vnodes": 128,
+      "add_moved_pct": 23.529,
+      "add_wrong_moves": 0,
+      "remove_moved_pct": 23.529,
+      "remove_wrong_moves": 0,
+      "ideal_pct": 25,
+      "spread_3_nodes": {
+        "nodes": 3,
+        "max_over_mean": 1.0831,
+        "min_over_mean": 0.9536,
+        "stddev_pct_of_mean": 5.89
+      },
+      "spread_4_nodes": {
+        "nodes": 4,
+        "max_over_mean": 1.1254,
+        "min_over_mean": 0.8691,
+        "stddev_pct_of_mean": 10.06
+      }
+    },
+    {
+      "vnodes": 256,
+      "add_moved_pct": 23.807,
+      "add_wrong_moves": 0,
+      "remove_moved_pct": 23.807,
+      "remove_wrong_moves": 0,
+      "ideal_pct": 25,
+      "spread_3_nodes": {
+        "nodes": 3,
+        "max_over_mean": 1.0422,
+        "min_over_mean": 0.9662,
+        "stddev_pct_of_mean": 3.16
+      },
+      "spread_4_nodes": {
+        "nodes": 4,
+        "max_over_mean": 1.0445,
+        "min_over_mean": 0.9523,
+        "stddev_pct_of_mean": 3.32
+      }
+    }
+  ]
+}

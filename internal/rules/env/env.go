@@ -1,0 +1,434 @@
+// Package env is the runtime shared by the VM and the interpreter: the
+// request view rules can read, built-in functions, values, and the decision
+// a rule evaluation produces. Keeping it shared guarantees both engines see
+// identical inputs and produce comparable outputs.
+package env
+
+import (
+	"errors"
+
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ai/tokens"
+	"net/http"
+	"net/netip"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// Type of a rule value.
+type Type uint8
+
+const (
+	Invalid Type = iota
+	Int
+	String
+	Bool
+)
+
+func (t Type) String() string {
+	return [...]string{"invalid", "int", "string", "bool"}[t]
+}
+
+// Value is a tagged value. No interfaces, so pushing one never allocates.
+type Value struct {
+	T Type
+	I int64 // Int, and Bool as 0/1
+	S string
+}
+
+func IntVal(i int64) Value     { return Value{T: Int, I: i} }
+func StringVal(s string) Value { return Value{T: String, S: s} }
+func BoolVal(b bool) Value {
+	if b {
+		return Value{T: Bool, I: 1}
+	}
+	return Value{T: Bool}
+}
+
+// Bool reports a Bool value's truth.
+func (v Value) Bool() bool { return v.I != 0 }
+
+// Equal compares values of the same type.
+func (v Value) Equal(o Value) bool {
+	if v.T == String {
+		return v.S == o.S
+	}
+	return v.I == o.I
+}
+
+// ---- fields ----
+
+// FieldID identifies a request field.
+type FieldID uint8
+
+const (
+	FieldUserID FieldID = iota
+	FieldUserTier
+	FieldClientIP
+	FieldRequestMethod
+	FieldRequestPath
+	FieldRequestHost
+	FieldRequestModel
+	FieldRequestMaxTokens // int
+	FieldRequestBody
+	numFields
+)
+
+var fieldNames = map[string]FieldID{
+	"user.id": FieldUserID, "user.tier": FieldUserTier, "client.ip": FieldClientIP,
+	"request.method": FieldRequestMethod, "request.path": FieldRequestPath, "request.host": FieldRequestHost,
+	"request.model": FieldRequestModel, "request.max_tokens": FieldRequestMaxTokens, "request.body": FieldRequestBody,
+}
+
+// LookupField resolves "obj.name" and its type.
+func LookupField(obj, name string) (FieldID, Type, bool) {
+	id, ok := fieldNames[obj+"."+name]
+	if id == FieldRequestMaxTokens {
+		return id, Int, ok
+	}
+	return id, String, ok
+}
+
+// ---- request ----
+
+// Request is everything a rule can read about one request.
+type Request struct {
+	Authenticated bool
+	UserID        string
+	UserTier      string
+	ClientIP      string
+	Method        string
+	Path          string
+	Host          string
+	Header        http.Header
+	RawQuery      string
+	Model         string // AI routes: parsed from the request body
+	MaxTokens     int64
+	Body          string
+
+	// client IP parsed on first use, so many cidr_match calls in one
+	// evaluation parse it once
+	ipParsed bool
+	ipOK     bool
+	ip       netip.Addr
+
+	// query split on first use into up to maxQueryPairs raw pairs (no
+	// allocation); longer queries fall back to scanning RawQuery
+	qParsed   bool
+	qOverflow bool
+	qN        int
+	qPairs    [maxQueryPairs][2]string
+}
+
+const maxQueryPairs = 16
+
+// Field returns a request field.
+func (r *Request) Field(id FieldID) string {
+	switch id {
+	case FieldUserID:
+		return r.UserID
+	case FieldUserTier:
+		return r.UserTier
+	case FieldClientIP:
+		return r.ClientIP
+	case FieldRequestMethod:
+		return r.Method
+	case FieldRequestPath:
+		return r.Path
+	case FieldRequestHost:
+		return r.Host
+	case FieldRequestModel:
+		return r.Model
+	case FieldRequestBody:
+		return r.Body
+	}
+	return ""
+}
+
+// FieldValue returns a field as a typed value.
+func (r *Request) FieldValue(id FieldID) Value {
+	if id == FieldRequestMaxTokens {
+		return IntVal(r.MaxTokens)
+	}
+	return StringVal(r.Field(id))
+}
+
+// ---- builtins ----
+
+// BuiltinID identifies a built-in function.
+type BuiltinID uint8
+
+const (
+	BuiltinHeader BuiltinID = iota
+	BuiltinQuery
+	BuiltinCIDRMatch
+	BuiltinTokensEstimate
+)
+
+// Builtin describes a built-in's signature.
+type Builtin struct {
+	ID     BuiltinID
+	Name   string
+	Params []Type
+	Result Type
+}
+
+var builtins = map[string]Builtin{
+	"header":          {BuiltinHeader, "header", []Type{String}, String},
+	"query":           {BuiltinQuery, "query", []Type{String}, String},
+	"cidr_match":      {BuiltinCIDRMatch, "cidr_match", []Type{String, String}, Bool},
+	"tokens.estimate": {BuiltinTokensEstimate, "tokens.estimate", []Type{String}, Int},
+}
+
+// NumFields is the number of request fields (bytecode verification).
+const NumFields = int(numFields)
+
+// BuiltinArity is the argument count of each built-in, indexed by ID.
+var BuiltinArity = [...]int{BuiltinHeader: 1, BuiltinQuery: 1, BuiltinCIDRMatch: 2, BuiltinTokensEstimate: 1}
+
+// LookupBuiltin resolves a built-in by name.
+func LookupBuiltin(name string) (Builtin, bool) {
+	b, ok := builtins[name]
+	return b, ok
+}
+
+// CanonicalHeaderArg rewrites a constant header() argument at compile time so
+// the runtime lookup is a direct map access with no allocation.
+func CanonicalHeaderArg(s string) string { return http.CanonicalHeaderKey(s) }
+
+// Call runs a built-in. Arguments are already type-checked.
+func Call(id BuiltinID, args []Value, r *Request) Value {
+	switch id {
+	case BuiltinHeader:
+		return StringVal(Header(r.Header, args[0].S))
+	case BuiltinQuery:
+		return StringVal(r.Query(args[0].S))
+	case BuiltinCIDRMatch:
+		return BoolVal(r.cidrMatch(args[0].S, args[1].S))
+	case BuiltinTokensEstimate:
+		return IntVal(tokens.Estimate(args[0].S))
+	}
+	return Value{}
+}
+
+// Header returns the first value of a request header. A key canonicalized at
+// compile time hits the map directly with no allocation.
+func Header(h http.Header, key string) string {
+	if v := h[key]; len(v) > 0 { // fast path: key already canonical
+		return v[0]
+	}
+	return h.Get(key)
+}
+
+// Query returns the first value of a query parameter.
+func (r *Request) Query(key string) string {
+	if !r.qParsed {
+		r.qParsed = true
+		raw := r.RawQuery
+		for raw != "" {
+			if r.qN == maxQueryPairs {
+				r.qOverflow = true
+				break
+			}
+			var pair string
+			pair, raw, _ = strings.Cut(raw, "&")
+			k, v, _ := strings.Cut(pair, "=")
+			r.qPairs[r.qN] = [2]string{k, v}
+			r.qN++
+		}
+	}
+	if r.qOverflow {
+		return queryValue(r.RawQuery, key)
+	}
+	for i := 0; i < r.qN; i++ {
+		k, v := r.qPairs[i][0], r.qPairs[i][1]
+		if strings.ContainsAny(k, "%+") {
+			if uk, err := url.QueryUnescape(k); err == nil {
+				k = uk
+			}
+		}
+		if k != key {
+			continue
+		}
+		if strings.ContainsAny(v, "%+") {
+			if uv, err := url.QueryUnescape(v); err == nil {
+				return uv
+			}
+		}
+		return v
+	}
+	return ""
+}
+
+// queryValue finds the first value of key without allocating unless the
+// query contains escapes.
+func queryValue(raw, key string) string {
+	for raw != "" {
+		var pair string
+		pair, raw, _ = strings.Cut(raw, "&")
+		k, v, _ := strings.Cut(pair, "=")
+		if strings.ContainsAny(k, "%+") {
+			if uk, err := url.QueryUnescape(k); err == nil {
+				k = uk
+			}
+		}
+		if k != key {
+			continue
+		}
+		if strings.ContainsAny(v, "%+") {
+			if uv, err := url.QueryUnescape(v); err == nil {
+				return uv
+			}
+		}
+		return v
+	}
+	return ""
+}
+
+func (r *Request) cidrMatch(ip, cidr string) bool {
+	pfx, err := netip.ParsePrefix(cidr)
+	return r.CIDRMatchPrefix(ip, pfx, err == nil)
+}
+
+// CIDRMatchPrefix is cidr_match with an already-parsed prefix (ok=false
+// means the constant prefix was invalid, which never matches).
+func (r *Request) CIDRMatchPrefix(ip string, pfx netip.Prefix, ok bool) bool {
+	if !ok {
+		return false
+	}
+	var addr netip.Addr
+	if ip == r.ClientIP {
+		if !r.ipParsed {
+			a, err := netip.ParseAddr(ip)
+			r.ip, r.ipOK, r.ipParsed = a, err == nil, true
+		}
+		if !r.ipOK {
+			return false
+		}
+		addr = r.ip
+	} else {
+		a, err := netip.ParseAddr(ip)
+		if err != nil {
+			return false
+		}
+		addr = a
+	}
+	return pfx.Contains(addr.Unmap())
+}
+
+// ---- decision ----
+
+// Limits and headers per evaluation are capped so a Decision is a fixed-size
+// value and evaluation does not allocate.
+const (
+	MaxLimits  = 8
+	MaxHeaders = 8
+)
+
+// Errors that make evaluation fail closed.
+var (
+	ErrBudget      = errors.New("rule evaluation exceeded its instruction budget")
+	ErrDivZero     = errors.New("division by zero")
+	ErrTooMany     = errors.New("too many limits or headers in one evaluation")
+	ErrStack       = errors.New("rule VM stack overflow")
+	ErrBadBytecode = errors.New("malformed bytecode")
+)
+
+// Limit algorithms (LimitReq.Algo).
+const (
+	AlgoTokenBucket   uint8 = 0
+	AlgoSlidingWindow uint8 = 1
+)
+
+// LimitReq is one limit that applies to this request.
+type LimitReq struct {
+	ID    int // unique per program; identifies the bucket together with Key
+	Count int64
+	Per   time.Duration
+	Key   string
+	Algo  uint8 // AlgoTokenBucket or AlgoSlidingWindow
+}
+
+// MaxBudgets caps budgets per evaluation.
+const MaxBudgets = 4
+
+// BudgetReq is one cost budget that applies to this request.
+type BudgetReq struct {
+	ID     int   // unique per program, like LimitReq.ID
+	Amount int64 // micro-USD per period
+	Per    time.Duration
+	Key    string
+}
+
+// HeaderSet is one header to add.
+type HeaderSet struct{ Name, Value string }
+
+// Decision is the result of evaluating a route's rules.
+type Decision struct {
+	Deny     int // 0 = allowed; otherwise the HTTP status
+	Limits   [MaxLimits]LimitReq
+	NLimits  int
+	Headers  [MaxHeaders]HeaderSet
+	NHeaders int
+	Budgets  [MaxBudgets]BudgetReq
+	NBudgets int
+	Steps    int   // instructions (VM) or nodes (interpreter) executed
+	Err      error // non-nil: evaluation failed; callers fail closed
+}
+
+// AddLimit appends a limit, reporting false when the cap is reached.
+func (d *Decision) AddLimit(l LimitReq) bool {
+	if d.NLimits == MaxLimits {
+		return false
+	}
+	d.Limits[d.NLimits] = l
+	d.NLimits++
+	return true
+}
+
+// AddBudget appends a budget, reporting false when the cap is reached.
+func (d *Decision) AddBudget(b BudgetReq) bool {
+	if d.NBudgets == MaxBudgets {
+		return false
+	}
+	d.Budgets[d.NBudgets] = b
+	d.NBudgets++
+	return true
+}
+
+// AddHeader appends a header, reporting false when the cap is reached.
+func (d *Decision) AddHeader(h HeaderSet) bool {
+	if d.NHeaders == MaxHeaders {
+		return false
+	}
+	d.Headers[d.NHeaders] = h
+	d.NHeaders++
+	return true
+}
+
+// SameOutcome compares the observable parts of two decisions (not Steps),
+// used by differential tests.
+func (d *Decision) SameOutcome(o *Decision) bool {
+	if (d.Err == nil) != (o.Err == nil) || d.Deny != o.Deny || d.NLimits != o.NLimits || d.NHeaders != o.NHeaders || d.NBudgets != o.NBudgets {
+		return false
+	}
+	if d.Err != nil {
+		return errors.Is(d.Err, o.Err) || d.Err.Error() == o.Err.Error()
+	}
+	for i := 0; i < d.NLimits; i++ {
+		if d.Limits[i] != o.Limits[i] {
+			return false
+		}
+	}
+	for i := 0; i < d.NHeaders; i++ {
+		if d.Headers[i] != o.Headers[i] {
+			return false
+		}
+	}
+	for i := 0; i < d.NBudgets; i++ {
+		if d.Budgets[i] != o.Budgets[i] {
+			return false
+		}
+	}
+	return true
+}

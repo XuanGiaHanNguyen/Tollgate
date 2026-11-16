@@ -51,7 +51,8 @@ func TestRouterNoMatch(t *testing.T) {
 
 func TestRetryBudget(t *testing.T) {
 	b := NewRetryBudget(0.2, 2)
-	if !b.Withdraw() || !b.Withdraw() {
+	w1, w2 := b.Withdraw(), b.Withdraw()
+	if !w1 || !w2 {
 		t.Fatal("initial allowance not available")
 	}
 	if b.Withdraw() {

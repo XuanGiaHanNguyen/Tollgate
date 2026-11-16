@@ -19,6 +19,8 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/breaker"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/lb"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit"
 )
 
 // Upstream is a named pool of targets with its balancer and health checker.
@@ -38,6 +40,8 @@ type Route struct {
 	cfg      config.Route
 	upstream *Upstream
 	proxy    *httputil.ReverseProxy
+	metrics  *metrics.RouteMetrics // nil when metrics are off
+	ai       bool                  // type: ai — model API handling
 }
 
 // Gateway serves proxied traffic. The router is held in an atomic pointer so
@@ -46,12 +50,18 @@ type Gateway struct {
 	router    atomic.Pointer[Router]
 	upstreams map[string]*Upstream
 	log       *slog.Logger
+	metrics   *metrics.Gateway
+	policy    *policy
+	ai        *aiState
+	stop      chan struct{}
 }
 
 // Options are optional hooks for New.
 type Options struct {
-	Logger   *slog.Logger
-	Observer Observer
+	Logger  *slog.Logger
+	Metrics *metrics.Gateway // optional
+	// Limiter enforces rule limits; nil means a single-node local limiter.
+	Limiter *ratelimit.Limiter
 	// OnBreakerChange and OnHealthChange are metrics/log hooks.
 	OnBreakerChange func(target string, from, to breaker.State)
 	OnHealthChange  func(target string, healthy bool)
@@ -63,7 +73,40 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &Gateway{upstreams: map[string]*Upstream{}, log: log}
+	g := &Gateway{upstreams: map[string]*Upstream{}, log: log, metrics: opts.Metrics,
+		stop: make(chan struct{})}
+	lim := opts.Limiter
+	if lim == nil {
+		var onDecision func(string)
+		var hooks ratelimit.BudgetHooks
+		if opts.Metrics != nil {
+			onDecision = opts.Metrics.RateLimitDecision
+			hooks.Expired = func(int64) { opts.Metrics.ReservationExpired() }
+		}
+		lim = ratelimit.NewLocal(onDecision, hooks)
+	}
+	g.policy = newPolicy(cfg, lim)
+	ai, err := newAIState(cfg)
+	if err != nil {
+		return nil, err
+	}
+	g.ai = ai
+	if m := opts.Metrics; m != nil {
+		// Metrics hooks run alongside any caller-supplied hooks.
+		userBreaker, userHealth := opts.OnBreakerChange, opts.OnHealthChange
+		opts.OnBreakerChange = func(target string, from, to breaker.State) {
+			m.SetBreakerState(target, int(to))
+			if userBreaker != nil {
+				userBreaker(target, from, to)
+			}
+		}
+		opts.OnHealthChange = func(target string, healthy bool) {
+			m.SetBackendHealthy(target, healthy)
+			if userHealth != nil {
+				userHealth(target, healthy)
+			}
+		}
+	}
 
 	for _, uc := range cfg.Upstreams {
 		up, err := buildUpstream(uc, opts, log)
@@ -71,6 +114,14 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 			return nil, err
 		}
 		g.upstreams[uc.Name] = up
+		if opts.Metrics != nil {
+			for _, t := range up.Targets {
+				opts.Metrics.SetBackendHealthy(t.String(), true)
+				if t.Breaker != nil {
+					opts.Metrics.SetBreakerState(t.String(), int(breaker.Closed))
+				}
+			}
+		}
 	}
 
 	budget := NewRetryBudget(cfg.RetryBudget.Ratio, cfg.RetryBudget.Initial)
@@ -80,7 +131,10 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 		up := g.upstreams[rc.Upstream]
 		rt := &Route{
 			Name: rc.Name, prefix: rc.Prefix, host: rc.Host, methods: rc.Methods,
-			cfg: rc, upstream: up,
+			cfg: rc, upstream: up, ai: rc.Type == "ai",
+		}
+		if opts.Metrics != nil {
+			rt.metrics = opts.Metrics.Route(rc.Name)
 		}
 		transport := &retryTransport{
 			route:    rc.Name,
@@ -88,7 +142,7 @@ func New(cfg *config.Config, opts Options) (*Gateway, error) {
 			upstream: up,
 			retry:    rc.Retry,
 			budget:   budget,
-			observer: opts.Observer,
+			metrics:  rt.metrics,
 		}
 		rt.proxy = &httputil.ReverseProxy{
 			Rewrite: func(pr *httputil.ProxyRequest) {
@@ -174,10 +228,23 @@ func (g *Gateway) Start() {
 	for _, up := range g.upstreams {
 		up.health.Start()
 	}
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-g.stop:
+				return
+			case <-t.C:
+				g.policy.limiter.Sweep()
+			}
+		}
+	}()
 }
 
 // Stop halts health checkers.
 func (g *Gateway) Stop() {
+	close(g.stop)
 	for _, up := range g.upstreams {
 		up.health.Stop()
 	}
@@ -186,16 +253,62 @@ func (g *Gateway) Stop() {
 // Upstream returns an upstream by name (for admin/metrics).
 func (g *Gateway) Upstream(name string) *Upstream { return g.upstreams[name] }
 
-// ServeHTTP routes and proxies one request.
+// ServeHTTP routes, applies rule policy, and proxies one request.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route := g.router.Load().Match(r)
 	if route == nil {
 		http.Error(w, "no route", http.StatusNotFound)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), route.cfg.Timeouts.Total)
-	defer cancel()
-	route.proxy.ServeHTTP(w, r.WithContext(ctx))
+	if route.ai {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w}
+		g.serveAI(sw, r, route)
+		if route.metrics != nil {
+			status := sw.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			route.metrics.ObserveRequest(status, time.Since(start).Seconds())
+		}
+		return
+	}
+	if route.metrics == nil {
+		if status := g.applyPolicy(r); status != 0 {
+			writePolicyStatus(w, status)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), route.cfg.Timeouts.Total)
+		defer cancel()
+		route.proxy.ServeHTTP(w, r.WithContext(ctx))
+		return
+	}
+
+	start := time.Now()
+	if status := g.applyPolicy(r); status != 0 {
+		writePolicyStatus(w, status)
+		total := time.Since(start)
+		route.metrics.ObserveRequest(status, total.Seconds())
+		g.metrics.ObserveOverhead(total.Seconds())
+		return
+	}
+	st := statsPool.Get().(*reqStats)
+	*st = reqStats{}
+	sw := &statusWriter{ResponseWriter: w}
+	ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), statsKey{}, st), route.cfg.Timeouts.Total)
+	route.proxy.ServeHTTP(sw, r.WithContext(ctx))
+	cancel()
+
+	total := time.Since(start)
+	status := sw.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	route.metrics.ObserveRequest(status, total.Seconds())
+	if overhead := total - st.upstream - st.streaming; overhead >= 0 {
+		g.metrics.ObserveOverhead(overhead.Seconds())
+	}
+	statsPool.Put(st)
 }
 
 func (g *Gateway) errorHandler(w http.ResponseWriter, r *http.Request, err error) {

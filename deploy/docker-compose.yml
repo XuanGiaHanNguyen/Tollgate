@@ -1,4 +1,7 @@
-# M1 topology: 1 gateway + 3 mock backends.
+# M6 topology: 3-node Raft control plane (ctl-1..3) feeding 3 gateways (cluster
+# rate limiting) + 3 mock backends + 2 mock LLM providers, Prometheus and Grafana.
+# Push rules with: tollgatectl -endpoints localhost:7201 rules push deploy/rules.tg
+# Gateways: localhost:8080-8082 (admin 9090-9092).
 # Later milestones add control plane, more gateways, mockllm and observability.
 name: tollgate
 
@@ -9,13 +12,70 @@ x-backend: &backend
   restart: "no"
 
 services:
-  gateway:
+  ctl-1:
+    build: {context: .., args: {BIN: tollgate-control}}
+    image: tollgate/tollgate-control:dev
+    command: ["-id", "1", "-data", "/data", "-raft-listen", ":7100", "-api-listen", ":7200", "-admin-listen", ":7300",
+              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200",
+              "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
+    volumes: ["ctl-1-data:/data"]
+    ports: ["7201:7200"]
+    restart: unless-stopped
+
+  ctl-2:
+    build: {context: .., args: {BIN: tollgate-control}}
+    image: tollgate/tollgate-control:dev
+    command: ["-id", "2", "-data", "/data", "-raft-listen", ":7100", "-api-listen", ":7200", "-admin-listen", ":7300",
+              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200",
+              "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
+    volumes: ["ctl-2-data:/data"]
+    ports: ["7202:7200"]
+    restart: unless-stopped
+
+  ctl-3:
+    build: {context: .., args: {BIN: tollgate-control}}
+    image: tollgate/tollgate-control:dev
+    command: ["-id", "3", "-data", "/data", "-raft-listen", ":7100", "-api-listen", ":7200", "-admin-listen", ":7300",
+              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200",
+              "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
+    volumes: ["ctl-3-data:/data"]
+    ports: ["7203:7200"]
+    restart: unless-stopped
+
+  rules-init:
+    build: {context: .., args: {BIN: tollgatectl}}
+    image: tollgate/tollgatectl:dev
+    command: ["-endpoints", "ctl-1:7200,ctl-2:7200,ctl-3:7200", "-timeout", "60s", "rules", "push", "/etc/tollgate/rules.tg"]
+    volumes: ["./rules.tg:/etc/tollgate/rules.tg:ro"]
+    depends_on: [ctl-1, ctl-2, ctl-3]
+    restart: on-failure
+
+  gateway-1:
     build: {context: .., args: {BIN: tollgate-gw}}
     image: tollgate/tollgate-gw:dev
-    command: ["-config", "/etc/tollgate/gateway.yaml"]
-    volumes: ["./gateway.yaml:/etc/tollgate/gateway.yaml:ro"]
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-1", "-node", "gateway-1"]
+    volumes:
+      - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
     ports: ["8080:8080", "9090:9090"]
-    depends_on: [backend-1, backend-2, backend-3]
+    depends_on: [ctl-1, ctl-2, ctl-3, backend-1, backend-2, backend-3, provider-a, provider-b]
+
+  gateway-2:
+    build: {context: .., args: {BIN: tollgate-gw}}
+    image: tollgate/tollgate-gw:dev
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-2", "-node", "gateway-2"]
+    volumes:
+      - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
+    ports: ["8081:8080", "9091:9090"]
+    depends_on: [ctl-1, ctl-2, ctl-3, backend-1, backend-2, backend-3, provider-a, provider-b]
+
+  gateway-3:
+    build: {context: .., args: {BIN: tollgate-gw}}
+    image: tollgate/tollgate-gw:dev
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-3", "-node", "gateway-3"]
+    volumes:
+      - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
+    ports: ["8082:8080", "9092:9090"]
+    depends_on: [ctl-1, ctl-2, ctl-3, backend-1, backend-2, backend-3, provider-a, provider-b]
 
   backend-1:
     <<: *backend
@@ -26,3 +86,37 @@ services:
   backend-3:
     <<: *backend
     command: ["-addr", ":9000", "-name", "backend-3"]
+
+  provider-a:
+    build: {context: .., args: {BIN: mockllm}}
+    image: tollgate/mockllm:dev
+    command: ["-addr", ":9200", "-name", "provider-a", "-ttft-median", "300ms", "-tail-prob", "0.05", "-tail-mult", "8",
+              "-inject", "secret code,home address", "-inject-prob", "0.1"]
+  provider-b:
+    build: {context: .., args: {BIN: mockllm}}
+    image: tollgate/mockllm:dev
+    command: ["-addr", ":9200", "-name", "provider-b", "-ttft-median", "350ms", "-tail-prob", "0.05", "-tail-mult", "8", "-seed", "2"]
+    depends_on: [provider-a]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9095:9090"]
+    depends_on: [gateway-1, gateway-2, gateway-3]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  ctl-1-data:
+  ctl-2-data:
+  ctl-3-data:

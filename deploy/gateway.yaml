@@ -1,9 +1,14 @@
-# Gateway config for docker-compose (M1: 1 gateway, 3 backends).
+# Gateway config for docker-compose: 3 gateways share this file (each passes
+# -cluster-self) and enforce limits together over gRPC (M4).
 listen: ":8080"
 admin_listen: ":9090"
 shutdown_timeout: 15s
 retry_budget: {ratio: 0.2, initial: 10}
 upstreams:
+  - name: provider-a
+    targets: [{url: http://provider-a:9200}]
+  - name: provider-b
+    targets: [{url: http://provider-b:9200}]
   - name: api
     balancer: round_robin
     targets:
@@ -19,8 +24,36 @@ upstreams:
     passive: {consecutive_failures: 5, eject_duration: 10s}
     breaker: {window: 10s, min_requests: 20, error_rate: 0.5, cooldown: 5s, half_open_probes: 3}
 routes:
+  - name: ai
+    type: ai
+    prefix: /v1/
+    upstream: provider-a
+    timeouts: {connect: 1s, header: 30s, total: 120s}
   - name: api
     prefix: /
     upstream: api
     timeouts: {connect: 1s, header: 5s, total: 10s}
     retry: {attempts: 2, base_backoff: 5ms, max_backoff: 50ms}
+control:   # rules come from the Raft control plane (push with tollgatectl)
+  endpoints: ["ctl-1:7200", "ctl-2:7200", "ctl-3:7200"]
+  cache_file: /tmp/tollgate-rules-cache.json
+auth:
+  api_keys:
+    - {key: demo-free-key, user_id: alice, tier: free}
+    - {key: demo-pro-key, user_id: bob, tier: pro}
+cluster:
+  listen: ":7000"
+  self: gateway-1          # overridden per container with -cluster-self
+  vnodes: 128
+  peer_timeout: 20ms
+  batch: {max: 100, flush: 500us}
+  members:
+    - {name: gateway-1, addr: "gateway-1:7000"}
+    - {name: gateway-2, addr: "gateway-2:7000"}
+    - {name: gateway-3, addr: "gateway-3:7000"}
+ai:
+  reservation_ttl: 2m
+  pricing:
+    "*": {input_per_1k_usd: 1.0, output_per_1k_usd: 3.0}
+  pattern_sets:
+    kid-safety: ["secret code", "home address", "phone number"]

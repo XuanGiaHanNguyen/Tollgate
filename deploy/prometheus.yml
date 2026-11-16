@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: tollgate-gw
+    static_configs:
+      - targets: ["gateway-1:9090", "gateway-2:9090", "gateway-3:9090"]
+  - job_name: tollgate-control
+    static_configs:
+      - targets: ["ctl-1:7300", "ctl-2:7300", "ctl-3:7300"]
