@@ -24,7 +24,11 @@ func TestDeployConfigsValid(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			src, err := os.ReadFile(filepath.Join(dir, cfg.Rules.File))
+			file := cfg.Rules.File
+			if cfg.Control != nil {
+				file = "rules.tg" // what rules-init pushes to the control plane
+			}
+			src, err := os.ReadFile(filepath.Join(dir, file))
 			if err != nil {
 				t.Fatal(err)
 			}

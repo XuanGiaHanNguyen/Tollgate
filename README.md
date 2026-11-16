@@ -13,7 +13,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 | M3 Rule language | done: bytecode VM 2.56× faster than a fair interpreter on large rule sets (goal was 3×; see METRICS.md) |
 | M4 Distributed rate limiting | done: 3 gateways over-admit +0.07% vs the limit; limits hold when a node dies (see METRICS.md) |
 | M5 AI gateway | done: cost budgets hold within 0.3% (vs +15% for count limits); hedging cuts TTFT p99 49% for +0.77% cost; filter catches 100% of split phrases (see METRICS.md) |
-| M6 Raft control plane | not started |
+| M6 Raft control plane | done: Raft from scratch, 5,000-seed simulation, 0 entries lost across 30 leader kills, config reaches gateways in ~5 ms (see METRICS.md) |
 | M7 Safe rollout | not started |
 | M8 AWS and polish | not started |
 
@@ -26,7 +26,9 @@ make chaos-kill-backend-local  # kill a backend under load (no Docker needed)
 
 make bench-e1 && make report   # load test (k6), regenerate docs/METRICS.md
 
-make up                        # docker-compose: 3 gateways + 3 backends, Prometheus :9095, Grafana :3000
+make up                        # docker-compose: 3 control nodes + 3 gateways + backends + mock LLMs, Prometheus :9095, Grafana :3000
+bin/tollgatectl -endpoints localhost:7201 status            # Raft cluster state
+bin/tollgatectl -endpoints localhost:7201 rules push deploy/rules.tg
 curl localhost:8080/hello      # proxied; X-Backend header shows which backend
 curl localhost:9090/admin/upstreams
 make chaos-kill-backend        # same kill check against compose

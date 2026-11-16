@@ -34,9 +34,9 @@ routes:
     upstream: api
     timeouts: {connect: 1s, header: 5s, total: 10s}
     retry: {attempts: 2, base_backoff: 5ms, max_backoff: 50ms}
-rules:
-  file: rules.tg
-  reload_interval: 1s
+control:   # rules come from the Raft control plane (push with tollgatectl)
+  endpoints: ["ctl-1:7200", "ctl-2:7200", "ctl-3:7200"]
+  cache_file: /tmp/tollgate-rules-cache.json
 auth:
   api_keys:
     - {key: demo-free-key, user_id: alice, tier: free}

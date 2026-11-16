@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/benchfmt"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/client"
 )
 
 var (
@@ -71,7 +72,7 @@ func main() {
 			dir = filepath.Join(os.TempDir(), "tollgate-quick-results")
 		}
 	}
-	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" && exp != "e4" && exp != "e10" { // pure Go, no binaries
+	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" && exp != "e4" && exp != "e10" && exp != "sim" { // pure Go, no binaries
 		if err := build(); err != nil {
 			log.Fatalf("build: %v", err)
 		}
@@ -88,6 +89,10 @@ func main() {
 		res, err = runE3()
 	case "e4":
 		res, err = runE4()
+	case "e5":
+		res, err = runE5()
+	case "e6":
+		res, err = runE6()
 	case "e7":
 		res, err = runE7()
 	case "e8":
@@ -96,6 +101,8 @@ func main() {
 		res, err = runE9()
 	case "e10":
 		res, err = runE10()
+	case "sim":
+		res, err = runSim()
 	default:
 		flag.Usage()
 		os.Exit(2)
@@ -117,7 +124,7 @@ func main() {
 }
 
 func build() error {
-	for _, b := range []string{"tollgate-gw", "mockbackend", "mockllm"} {
+	for _, b := range []string{"tollgate-gw", "mockbackend", "mockllm", "tollgate-control"} {
 		cmd := exec.Command("go", "build", "-o", "bin/"+b, "./cmd/"+b)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -148,6 +155,78 @@ type cluster struct {
 	admins   []string // gateway admin base URLs
 	gwProcs  []*exec.Cmd
 	llmURLs  []string // mockllm base URLs, provider-a first
+	ctl      []*ctlNode
+}
+
+// ctlNode is one tollgate-control process.
+type ctlNode struct {
+	id    int
+	api   string // client API address
+	admin string // http admin base URL
+	args  []string
+	proc  *exec.Cmd
+}
+
+// startControl launches n control-plane nodes and waits for a leader.
+func (c *cluster) startControl(n int) error {
+	var rp, ap []string
+	for i := 1; i <= n; i++ {
+		rp = append(rp, fmt.Sprintf("%d=127.0.0.1:%d", i, 7100+i))
+		ap = append(ap, fmt.Sprintf("%d=127.0.0.1:%d", i, 7200+i))
+	}
+	for i := 1; i <= n; i++ {
+		nd := &ctlNode{id: i, api: fmt.Sprintf("127.0.0.1:%d", 7200+i), admin: fmt.Sprintf("http://127.0.0.1:%d", 7300+i),
+			args: []string{"-id", fmt.Sprint(i), "-data", filepath.Join(c.dir, fmt.Sprintf("ctl-%d", i)),
+				"-raft-listen", fmt.Sprintf("127.0.0.1:%d", 7100+i), "-api-listen", fmt.Sprintf("127.0.0.1:%d", 7200+i),
+				"-admin-listen", fmt.Sprintf("127.0.0.1:%d", 7300+i), "-raft-peers", strings.Join(rp, ","), "-api-peers", strings.Join(ap, ",")}}
+		c.ctl = append(c.ctl, nd)
+		if err := c.startCtl(nd); err != nil {
+			return err
+		}
+	}
+	for _, nd := range c.ctl {
+		if err := waitOK(nd.admin + "/healthz"); err != nil {
+			return err
+		}
+	}
+	_, err := c.ctlLeader(10 * time.Second)
+	return err
+}
+
+func (c *cluster) startCtl(nd *ctlNode) error {
+	if err := c.spawn("bin/tollgate-control", nd.args...); err != nil {
+		return err
+	}
+	nd.proc = c.procs[len(c.procs)-1]
+	return nil
+}
+
+// ctlLeader polls /status until some node reports leader.
+func (c *cluster) ctlLeader(timeout time.Duration) (*ctlNode, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, nd := range c.ctl {
+			var st struct {
+				State string `json:"state"`
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			err := getJSON(ctx, nd.admin+"/status", &st)
+			cancel()
+			if err == nil && st.State == "leader" {
+				return nd, nil
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("no control-plane leader within %v", timeout)
+}
+
+func (c *cluster) ctlEndpoints() []string {
+	var eps []string
+	for _, nd := range c.ctl {
+		eps = append(eps, nd.api)
+	}
+	return eps
 }
 
 type clusterSpec struct {
@@ -163,6 +242,7 @@ type clusterSpec struct {
 	batchFlush    time.Duration
 	llms          []llmSpec // mock LLM providers, as upstreams provider-a, provider-b, ...
 	aiYAML        string    // top-level ai: block
+	control       int       // control-plane nodes; gateways then take rules from them
 }
 
 // llmSpec is one mockllm process; it becomes upstream "provider-<letter>".
@@ -202,11 +282,35 @@ func startCluster(spec clusterSpec) (*cluster, error) {
 	if len(spec.llms) > 0 {
 		aiRoute = "  - {name: ai, type: ai, prefix: /v1/, upstream: provider-a, timeouts: {connect: 1s, header: 30s, total: 120s}}\n"
 	}
+	if spec.control > 0 {
+		if err := c.startControl(spec.control); err != nil {
+			c.stop()
+			return nil, err
+		}
+		// Gateways wait for rules before listening: push them first.
+		if spec.rules != "" {
+			cl := client.New(c.ctlEndpoints())
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, err := cl.Put(ctx, "rules", []byte(spec.rules))
+			cancel()
+			cl.Close()
+			if err != nil {
+				c.stop()
+				return nil, err
+			}
+		}
+	}
 	for i := 1; i <= spec.gateways; i++ {
 		listen := fmt.Sprintf("127.0.0.1:%d", 18080+i)
 		admin := fmt.Sprintf("127.0.0.1:%d", 19090+i)
 		extra := spec.gatewayExtra
-		if spec.rules != "" {
+		if spec.control > 0 {
+			eps := make([]string, len(c.ctl))
+			for j, nd := range c.ctl {
+				eps[j] = fmt.Sprintf("%q", nd.api)
+			}
+			extra += fmt.Sprintf("control:\n  endpoints: [%s]\n  cache_file: %q\n", strings.Join(eps, ", "), filepath.Join(dir, fmt.Sprintf("gw-%d-rules.json", i)))
+		} else if spec.rules != "" {
 			if err := os.WriteFile(filepath.Join(dir, "rules.tg"), []byte(spec.rules), 0o644); err != nil {
 				c.stop()
 				return nil, err

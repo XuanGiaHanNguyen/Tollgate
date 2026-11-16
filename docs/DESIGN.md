@@ -288,3 +288,71 @@ block_patterns "kid-safety" action redact
 - **E9** (40 req/s, TTFT median 100 ms with 5% of requests ×10, 2,400 requests per run, median of 3): TTFT p99 off **1,291 ms**; hedge max 1% 1,205 ms (−6.6%, +0.12% cost); **max 5% 660 ms (−48.9%) for +0.77% cost**; max 10% 535 ms (−58.6%) for +0.88% cost. p50 unchanged (~103 ms). The backup won 80–98% of hedges. Goal "cut p99 with under 5% extra cost" met.
 - **Why 10% barely beats 5%:** hedges fire only after the primary's p95, so at most ~5% of requests are ever late enough to hedge; the measured hedge rate at max 10% was 5.5–5.7%. A larger budget only helps if the trigger quantile drops too. Run-to-run variance is large at p99 (5%: 383–711 ms) because a 2,400-request run has only 24 samples above p99.
 - **E10:** see the earlier entry; 27–35 MB/s, ~2 µs p99 per chunk, 100% split recall.
+
+## M6: Raft control plane — plan
+
+### Shape: a pure Raft core, two drivers
+`internal/raft` is a **deterministic state machine**: no goroutines, no clock, no I/O. It exposes `Tick()`, `Step(Message)`, `Propose(data)`, `ReadIndex(ctx)` and `Ready()`/`Advance()` (the etcd-style protocol). A `Ready` carries what must happen next, in order: the hard state and new entries to **persist (fsync) before** any message in the same `Ready` is sent, a snapshot to install, messages to send, committed entries to apply, and confirmed reads. Two drivers run the same core:
+- `raft.Server`: real time (ticker), file storage with fsync, gRPC transport.
+- `internal/sim`: fake clock, fake network and in-memory storage, all driven by one seed. Any failure replays exactly from its seed.
+
+### Raft (Ongaro & Ousterhout 2014), fixed 3-node membership
+- **Election:** randomized timeout in [E, 2E) ticks, `RequestVote` with the log up-to-date check, a no-op entry on winning.
+- **Replication:** `AppendEntries` with the prev-index/term consistency check; on reject the follower returns its last index as a hint and the leader backs `next` off to `min(next − 1, hint + 1)`. Commit only entries of the current term once a majority match (§5.4.2). Empty `AppendEntries` serve as heartbeats.
+- **Persistence:** term, vote and entries are fsynced before replying; restart replays them.
+- **Snapshots:** the application snapshots after N applied entries; the log is compacted to the snapshot index; `InstallSnapshot` for followers whose `next` is below the first retained index.
+- **Linearizable reads:** `ReadIndex`: the leader records its commit index, confirms leadership with one heartbeat round acked by a majority, and serves the read once that index is applied. Followers redirect.
+
+### Storage (`internal/raft/wal`)
+An append-only log file of CRC-checked records (hard state; entry). On replay a later entry at index *i* truncates everything from *i* on (that's how conflicting suffixes are overwritten). Snapshots are written to a temp file, fsynced, renamed and the directory fsynced; the WAL is then rewritten without the compacted prefix the same way. A torn tail record (crash mid-write) is detected by the CRC and dropped.
+
+### Control plane (`internal/control/store`, `cmd/tollgate-control`)
+- The state machine is a versioned KV store: version = Raft index of the last applied change. It keeps a bounded change history for watchers.
+- The gRPC `ControlService`: `Put`/`Delete` (leader only; followers answer with the leader's address), `Get` (linearizable via ReadIndex), `Status`, and `Watch(from_version)` (a stream of every change after `from_version`; a full snapshot first if history was compacted past it).
+- **Rules:** the leader compiles (type-checks) rule source before proposing and rejects invalid rules. Gateways receive the validated **source** and compile it locally. **Deviation from the spec**, which says compiled rules are shipped: the compiler is deterministic and the gateway already has it, and shipping source avoids a bytecode serialization format and versioning problem. Recorded here; revisit if needed.
+- **Keys:** `rules` (rule source), `members` (gateway cluster membership for the hash ring, M4).
+
+### Gateways
+`control: {endpoints: [...]}` in the gateway YAML replaces `rules.file`. Each gateway watches from its last version, reconnects (and resumes) on failure, keeps serving its last good config if the control plane is down, and reports `tollgate_config_version` and `tollgate_config_propagation_seconds` (leader commit timestamp in the event → active on the gateway).
+
+### `tollgatectl`
+`rules push <file>`, `rules get`, `status`, `members set`.
+
+### Deterministic simulation (`internal/sim`)
+3 Raft cores + config stores on a fake network that drops, delays, duplicates and reorders messages, partitions nodes, and crashes and restarts them from their persisted state, all from one seed. Invariants checked continuously:
+- (1) at most one leader per term;
+- (2) log matching;
+- (3) state machine safety: no two nodes apply different entries at the same index;
+- (4) every committed proposal is applied on every node after healing;
+- (5) liveness: after healing, a leader emerges and pending proposals commit within a bound.
+
+Acceptance: 1,000+ seeds; CI runs a 200-seed smoke.
+
+### Experiments
+- **E5:** commit latency (Put through the leader, fsync on), leader failover time under writes (SIGKILL the leader; time until a new leader accepts a write), committed entries lost (must be 0: every acknowledged write must be readable after failover).
+- **E6:** commit 100 rule changes and measure commit-to-active time on all 3 gateways (p50/p99).
+
+## M6: decisions log
+
+- **Pure core, two drivers.** All Raft logic lives in a deterministic state machine (`internal/raft`); the server (`internal/control`) and the simulator (`internal/sim`) only move messages, persist and apply. The simulator therefore tests the exact code that runs in production, and every failure replays from its seed (`go test ./internal/sim -run TestTrace` with `TRACE_SEED=N` prints a full event log).
+- **The simulator's first bug was its own.** Seed 2 failed immediately: nodes were started while the member list was still being built, so node 1 thought it was a one-node cluster and committed alone. The event-trace replay found it in one run.
+- **Mutation check.** `bench/sim/mutants.py` plants five classic Raft bugs (vote without the up-to-date check, in vote and pre-vote; committing old-term entries by counting replicas, Raft's Figure 8; no step-down on a higher term; voting twice in a term) and requires the simulator to catch each.
+  - The first harness used fixed fault rates and missed Figure 8 within 300 seeds; fault intensity now varies per seed, and Figure 8 is caught at seed 1061.
+  - A first version of the mutation script reported a mutant that failed to compile as "not caught", which briefly made it look like PreVote hid a bug. The script now fails on build errors.
+  - Figure 8 needs more than 1000 seeds, so CI runs a 200-seed smoke test and a nightly job runs 5000 seeds per suite plus the mutation check.
+- **PreVote (Raft thesis §9.6), found by a live test.** Restarting a killed leader made it raise the term and depose the healthy leader (a write outage on every restart). PreVote asks "would you vote for me?" without changing anyone's term; peers that heard from a leader within an election timeout refuse. Verified live: a restarted node now rejoins as a follower at the same term.
+- **PreVote reduces what the simulator explores.** With PreVote on every seed, the simulator stopped catching Figure 8 in 3000 seeds (calmer elections mean fewer stale-log candidacies). The simulator now alternates: even seeds run the production config (PreVote on), odd seeds turn it off.
+- **gRPC reconnect backoff** is capped at 1 s for peer links; the default grows to minutes, so a restarted node missed heartbeats and timed out.
+- **Proposals resolve on apply, by term.** A client is acknowledged only when its entry is applied with the term it was proposed in; if another leader's entry takes that index, the client gets `ErrDropped` (retry), never a false success. Clients retry through elections and follow `not_leader` redirects. A stopped node answers `Unavailable` so clients move on.
+- **Reads** are linearizable through ReadIndex (leader confirms with a heartbeat quorum, then serves once that index is applied); a fresh leader answers `ErrNotReady` until its no-op commits and the server retries.
+- **Rules ship as source, compiled on both ends.** The leader compiles before proposing and refuses invalid rules (`InvalidArgument` with the compiler's diagnostics); gateways compile the same source. Deviation from the spec's "compiled rules are distributed", chosen to avoid a bytecode wire format and its versioning.
+- **Gateways never block on the control plane once they have rules.** They cache the last accepted rules on disk, keep serving them when every control node is down, and restart from the cache (verified live). With no cache and no control plane a gateway waits rather than serving with no policy.
+- **Propagation timing** counts only changes committed after the gateway's watch started; catch-up of older versions at startup would otherwise inflate it by the gateway's start delay.
+- **Not done:** gateway membership (`members`) from the control plane. The hash ring still comes from each gateway's static `cluster` block; dynamic membership needs peer dialing on change and is deferred.
+
+## M6: measured results (laptop; full tables in METRICS.md)
+
+- **E5** (3 nodes, 50 ms tick, fsync = F_FULLFSYNC, median of 3 runs): commit latency **p50 13.5 ms / p99 25.2 ms** (leader and follower each fsync before the write is acknowledged); leader failover over 30 SIGKILLs: new leader elected **p50 544 ms / max 947 ms**, first write accepted **p50 643 ms / max 972 ms**; **0 of 17,842 acknowledged writes lost**. Election time is set by the 500–1000 ms randomized timeout; a shorter tick would cut it at the cost of more heartbeats.
+- **The first E5 run is superseded** (`e5-20261116T001204Z.json`, kept): its "first write" times were quantized at ~640/1140/1640 ms by the client's 20–500 ms retry backoff and included two 0.1 ms "failovers" (writes the old leader committed just before dying). The rerun retries every 5 ms and counts only writes started after the kill.
+- **E6** (3 control nodes → 3 gateways, 100 rule changes, median of 3): commit → active on all gateways **p50 4.8 ms / p99 16.1 ms**; no change timed out. Each gateway compiles the rules itself, which is inside this time.
+- **Simulation acceptance:** **5,000 seeds × 2 suites** (KV and the real config store) pass: ~149k elections, ~451k crashes, ~68k partitions, ~3.47M committed entries, ~35k snapshot installs, ~13.5M dropped messages. The mutation check catches all five planted bugs (Figure 8 first at seed 1061).

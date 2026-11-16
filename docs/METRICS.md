@@ -165,6 +165,60 @@ Method: 1e+06 keys (`<limitID>|user-<n>`), hash FNV-1a 64 + splitmix64 finalizer
 
 The share of keys that moves equals the share the changed node owns, so it tracks the ideal 1/N only as closely as the ring spreads load; more virtual nodes tighten both.
 
+### E5: How does Raft behave?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 00:25 → 00:29 (UTC) |
+| Commit | `ca83380872d5` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | local processes: 3 tollgate-control nodes; 3 gateway node(s) max |
+| Load average at start | 3.74 |
+| Power | battery |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+
+Method: 3 nodes, tick 50ms (election timeout 500-1000ms, pre-vote on); WAL with fsync (F_FULLFSYNC on macOS) on every Raft Ready. Commit latency: client-side Put latency, sequential writes, leader stable, measured window after warm-up. Failover: 10 SIGKILLs of the leader per run while a writer keeps writing (retrying every 5ms); 'first write' counts only writes started after the kill; the killed node is restarted between kills. Loss check: every acknowledged write (unique key) read back linearizably at the end of the run.
+
+| Measure | Result |
+| --- | --- |
+| Commit latency p50 / p99 (median run, 4353 writes) | 13.51 ms / 25.20 ms |
+| Leader failover: kill → new leader elected, p50 / max (30 kills) | 544 ms / 947 ms |
+| Leader failover: kill → first write accepted, p50 / max | 643 ms / 972 ms |
+| **Committed entries lost** | **0 of 17842 acknowledged writes** |
+
+Per run (commit p50/p99 ms; failover p50/max ms; lost):
+
+- run 1: 14.32 / 24.03; 582 / 920; 0 lost of 5799
+- run 2: 13.62 / 25.25; 779 / 972; 0 lost of 5930
+- run 3: 13.51 / 25.20; 560 / 846; 0 lost of 6113
+
+### E6: How fast does config reach gateways?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 00:17 → 00:17 (UTC) |
+| Commit | `edbac52056ae` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | local processes: 3 tollgate-control + 3 tollgate-gw (watch streams); 3 gateway node(s) max |
+| Load average at start | 3.83 |
+| Power | battery |
+| Repetitions | 3 (median reported) |
+
+Method: 100 rule changes through 3 control nodes to 3 gateways; a different rule file each time (deny status varies), compiled by the leader before commit and by each gateway after; from the leader acknowledging the commit (Put returns) until each gateway's /admin/rules reports that version (polled every 1ms).
+
+| Propagation | p50 | p99 |
+| --- | --- | --- |
+| Commit → active on **all** gateways (median run) | 4.76 ms | 16.09 ms |
+| Commit → active on one gateway | 4.49 ms | 16.06 ms |
+
+Per run (all gateways p50 / p99 ms; timeouts):
+
+- run 1: 4.76 / 16.09; 0
+- run 2: 4.39 / 21.62; 0
+- run 3: 4.28 / 9.85; 0
+
 ### E7: Does the breaker protect latency?
 
 | Environment | |
@@ -284,12 +338,38 @@ Method: a 1.048576e+06-byte corpus streamed in uniform random 1-64 bytes, like S
 
 Planted and split counts are summed over all runs. Throughput is measured in a separate pass without per-chunk timers.
 
+### SIM: Does Raft stay safe under seeded faults? (deterministic simulation)
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 00:17 → 00:24 (UTC) |
+| Commit | `edbac52056ae` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | single process (deterministic simulation); 3 gateway node(s) max |
+| Load average at start | 3.23 |
+| Power | battery |
+| Repetitions | 3 (median reported) |
+
+Method: TestSeeds (KV machine) and TestSeedsStore (control-plane config store); faults: message drop/delay/duplicate/reorder, one- and two-way partitions, crashes incl. between step and persist; intensity varies per seed; PreVote on even seeds; invariants: election safety, state machine safety (entry and state hash per index), snapshot consistency, liveness after healing.
+
+| Suite | Seeds passed | Elections | Crashes | Partitions | Entries committed | Snapshots | Snapshot installs | Messages dropped |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| KV machine | 5000 | 74339 | 225274 | 33806 | 1735903 | 114580 | 17694 | 6750018 |
+| Config store | 5000 | 74700 | 225902 | 33973 | 1733743 | 114463 | 17719 | 6753717 |
+
+Mutation check (bench/sim/mutants.py: five planted Raft bugs, each must be caught) — all caught: **true**
+
+- vote ignores log up-to-date check: caught -> sim_test.go:23: seed 1 tick 243: state machine safety: node 2 applied (term 5, "") at index 12, another node applied (term 4, "k6=v14")
+- vote and pre-vote ignore log up-to-date check: caught -> sim_test.go:23: seed 1 tick 243: state machine safety: node 2 applied (term 5, "") at index 12, another node applied (term 4, "k6=v14")
+- commit earlier-term entries by count (Figure 8): caught -> sim_test.go:23: seed 1061 tick 726: state machine safety: node 3 applied (term 21, "") at index 46, another node applied (term 14, "k2=v48")
+- no step-down on higher term: caught -> sim_test.go:23: seed 10 tick 2200: liveness: write @305 not applied on every node within 200 ticks after healing: [{ID:1 Term:23 Lead:2 Commit:305 App
+- vote granted twice in a term: caught -> sim_test.go:23: seed 1 tick 22: election safety: nodes 2 and 3 both leader in term 1
+
 ## AWS
 
 _No results yet._
 
 ## Not yet measured
 
-- E5: How does Raft behave?
-- E6: How fast does config reach gateways?
 - E11: Does safe rollout catch bad config?

@@ -42,6 +42,7 @@ type Gateway struct {
 	hedges       *prometheus.CounterVec
 	filterHits   *prometheus.CounterVec
 	holdback     *prometheus.HistogramVec
+	propagation  prometheus.Observer
 }
 
 // Policy outcomes for tollgate_policy_decisions_total.
@@ -145,6 +146,12 @@ func NewGateway(node string) *Gateway {
 	reg.MustRegister(g.requests, g.duration, overhead, g.retries, g.breakerState, g.backendHealth, configVersion, ruleEval, policy,
 		rl, g.peerRPC, g.batchSize, g.costReserved, g.costSettled, g.costErr, expired, g.ttft, g.hedges, g.filterHits, g.holdback)
 	g.resvExpired = expired.WithLabelValues(node)
+	prop := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "tollgate_config_propagation_seconds", Help: "Commit on the control-plane leader to active on this gateway.",
+		Buckets: latencyBuckets,
+	}, []string{"node"})
+	reg.MustRegister(prop)
+	g.propagation = prop.WithLabelValues(node)
 	g.rlDecisions = map[string]prometheus.Counter{}
 	for _, r := range []string{"allow", "deny", "degraded"} {
 		g.rlDecisions[r] = rl.WithLabelValues(r, node)
@@ -228,6 +235,9 @@ func (g *Gateway) CostSettled(model string, estimate, actual int64) {
 	}
 }
 
+// ConfigPropagation records commit-to-active time for one config version.
+func (g *Gateway) ConfigPropagation(seconds float64) { g.propagation.Observe(seconds) }
+
 // ReservationExpired counts a hold released at its deadline.
 func (g *Gateway) ReservationExpired() { g.resvExpired.Inc() }
 
@@ -273,3 +283,42 @@ func (r *RouteMetrics) ObserveRequest(status int, seconds float64) {
 
 // Retry records one retry.
 func (r *RouteMetrics) Retry() { r.retries.Inc() }
+
+// Control holds control-plane node metrics.
+type Control struct {
+	Registry      *prometheus.Registry
+	term          prometheus.Gauge
+	isLeader      prometheus.Gauge
+	commitLatency prometheus.Observer
+}
+
+// NewControl registers control-plane metrics for one node.
+func NewControl(node string) *Control {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	term := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tollgate_raft_term", Help: "Current Raft term."}, []string{"node"})
+	leader := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tollgate_raft_is_leader", Help: "1 if this node leads."}, []string{"node"})
+	lat := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tollgate_raft_commit_latency_seconds",
+		Help: "Write latency through consensus (propose to applied on the leader).", Buckets: latencyBuckets}, []string{"node"})
+	reg.MustRegister(term, leader, lat)
+	return &Control{Registry: reg, term: term.WithLabelValues(node), isLeader: leader.WithLabelValues(node),
+		commitLatency: lat.WithLabelValues(node)}
+}
+
+// Handler serves /metrics.
+func (c *Control) Handler() http.Handler {
+	return promhttp.HandlerFor(c.Registry, promhttp.HandlerOpts{Registry: c.Registry})
+}
+
+// Term records the term and leadership.
+func (c *Control) Term(term uint64, leader bool) {
+	c.term.Set(float64(term))
+	if leader {
+		c.isLeader.Set(1)
+	} else {
+		c.isLeader.Set(0)
+	}
+}
+
+// CommitLatency records one write's latency.
+func (c *Control) CommitLatency(seconds float64) { c.commitLatency.Observe(seconds) }
