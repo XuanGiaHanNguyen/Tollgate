@@ -20,6 +20,7 @@ const (
 	Illegal
 	Ident
 	Int
+	Float
 	String
 
 	// keywords
@@ -34,12 +35,19 @@ const (
 	SetHeader
 	True
 	False
+	Budget
+	Providers
+	Hedge
+	BlockPatterns
 
 	// punctuation and operators
 	LBrace
 	RBrace
 	LParen
 	RParen
+	LBracket
+	RBracket
+	Percent
 	Comma
 	Dot
 	Assign
@@ -59,7 +67,9 @@ const (
 )
 
 var kindNames = map[Kind]string{
-	EOF: "EOF", Illegal: "ILLEGAL", Ident: "IDENT", Int: "INT", String: "STRING",
+	EOF: "EOF", Illegal: "ILLEGAL", Ident: "IDENT", Int: "INT", Float: "FLOAT", String: "STRING",
+	Budget: "budget", Providers: "providers", Hedge: "hedge", BlockPatterns: "block_patterns",
+	LBracket: "[", RBracket: "]", Percent: "%",
 	Let: "let", Route: "route", Require: "require", When: "when", Limit: "limit", Per: "per",
 	By: "by", Deny: "deny", SetHeader: "set_header", True: "true", False: "false",
 	LBrace: "{", RBrace: "}", LParen: "(", RParen: ")", Comma: ",", Dot: ".", Assign: "=",
@@ -77,6 +87,7 @@ func (k Kind) String() string {
 var keywords = map[string]Kind{
 	"let": Let, "route": Route, "require": Require, "when": When, "limit": Limit,
 	"per": Per, "by": By, "deny": Deny, "set_header": SetHeader, "true": True, "false": False,
+	"budget": Budget, "providers": Providers, "hedge": Hedge, "block_patterns": BlockPatterns,
 }
 
 // Token is one lexeme. For String tokens Text is the decoded value; for all
@@ -89,7 +100,7 @@ type Token struct {
 
 func (t Token) String() string {
 	switch t.Kind {
-	case Ident, Int, Illegal:
+	case Ident, Int, Float, Illegal:
 		return fmt.Sprintf("%s %s(%s)", t.Pos, t.Kind, t.Text)
 	case String:
 		return fmt.Sprintf("%s STRING(%s)", t.Pos, strconv.Quote(t.Text))
@@ -202,6 +213,14 @@ func (l *Lexer) Next() Token {
 			l.errorf(pos, "malformed number %q", text)
 			return Token{Kind: Illegal, Text: text, Pos: pos}
 		}
+		// Decimal literal (USD amounts, percentages): digits '.' digits.
+		if l.off+1 < len(l.src) && l.src[l.off] == '.' && isDigit(rune(l.src[l.off+1])) {
+			l.advance()
+			for l.off < len(l.src) && isDigit(l.peek()) {
+				l.advance()
+			}
+			return Token{Kind: Float, Text: l.src[start:l.off], Pos: pos}
+		}
 		text := l.src[start:l.off]
 		if _, err := strconv.ParseInt(text, 10, 64); err != nil {
 			l.errorf(pos, "integer %s out of range", text)
@@ -232,6 +251,12 @@ func (l *Lexer) Next() Token {
 		return Token{Kind: RParen, Text: ")", Pos: pos}
 	case ',':
 		return Token{Kind: Comma, Text: ",", Pos: pos}
+	case '[':
+		return Token{Kind: LBracket, Text: "[", Pos: pos}
+	case ']':
+		return Token{Kind: RBracket, Text: "]", Pos: pos}
+	case '%':
+		return Token{Kind: Percent, Text: "%", Pos: pos}
 	case '.':
 		return Token{Kind: Dot, Text: ".", Pos: pos}
 	case '+':

@@ -216,6 +216,8 @@ func (a *analyzer) markStmtUses(s ast.Stmt) {
 		a.markUses(s.Key)
 	case *ast.SetHeader:
 		a.markUses(s.Value)
+	case *ast.Budget:
+		a.markUses(s.Key)
 	}
 }
 

@@ -35,10 +35,15 @@ func Check(prog *ast.Program) (*Info, []ast.Diagnostic) {
 				c.errorf(d.Pos, "%q is a built-in function and cannot be redefined", d.Name)
 				continue
 			}
+			if d.Name == "body" {
+				c.errorf(d.Pos, "\"body\" is predeclared (the request body) and cannot be redefined")
+				continue
+			}
 			t := c.expr(d.Value)
 			c.lets[d.Name] = d
 			c.types[d.Name] = t
 		case *ast.Route:
+			c.routeSettings(d)
 			c.stmts(d.Body)
 		}
 	}
@@ -49,14 +54,70 @@ func (c *checker) errorf(pos ast.Pos, format string, a ...any) {
 	c.diags = append(c.diags, ast.Errorf(stage, pos, format, a...))
 }
 
-func (c *checker) stmts(ss []ast.Stmt) {
+// routeSettings checks AI route settings: top-level only, at most once.
+func (c *checker) routeSettings(r *ast.Route) {
+	seen := map[string]ast.Pos{}
+	once := func(name string, pos ast.Pos) {
+		if prev, ok := seen[name]; ok {
+			c.errorf(pos, "%s already set for this route at %s", name, prev)
+		}
+		seen[name] = pos
+	}
+	var providers *ast.Providers
+	var hedge *ast.Hedge
+	for _, s := range r.Body {
+		switch s := s.(type) {
+		case *ast.Providers:
+			once("providers", s.Pos)
+			providers = s
+			names := map[string]bool{}
+			for _, n := range s.Names {
+				if n == "" || names[n] {
+					c.errorf(s.Pos, "provider names must be non-empty and unique")
+				}
+				names[n] = true
+			}
+		case *ast.Hedge:
+			once("hedge", s.Pos)
+			hedge = s
+			if s.MaxPct <= 0 || s.MaxPct > 100 {
+				c.errorf(s.Pos, "hedge max must be in (0, 100]%%, found %g%%", s.MaxPct)
+			}
+		case *ast.BlockPatterns:
+			once("block_patterns", s.Pos)
+			switch s.Action {
+			case "redact", "block", "flag":
+			default:
+				c.errorf(s.Pos, "block_patterns action must be redact, block or flag, found %q", s.Action)
+			}
+		}
+	}
+	if hedge != nil && (providers == nil || len(providers.Names) < 2) {
+		c.errorf(hedge.Pos, "hedge needs at least two providers on the route")
+	}
+}
+
+func (c *checker) stmts(ss []ast.Stmt) { c.stmtsDepth(ss, 0) }
+
+func (c *checker) stmtsDepth(ss []ast.Stmt, depth int) {
 	for _, s := range ss {
 		switch s := s.(type) {
+		case *ast.Providers, *ast.Hedge, *ast.BlockPatterns:
+			if depth > 0 {
+				c.errorf(s.At(), "route settings (providers, hedge, block_patterns) must be at the top level of a route, not inside when")
+			}
+		case *ast.Budget:
+			if s.Amount <= 0 {
+				c.errorf(s.Pos, "budget amount must be positive")
+			}
+			if t := c.expr(s.Key); t != env.Invalid && t != env.String {
+				c.errorf(s.Key.At(), "budget key must be a string, found %s", t)
+			}
 		case *ast.When:
 			if t := c.expr(s.Cond); t != env.Invalid && t != env.Bool {
 				c.errorf(s.Cond.At(), "when condition must be bool, found %s", t)
 			}
-			c.stmts(s.Body)
+			c.stmtsDepth(s.Body, depth+1)
 		case *ast.Limit:
 			if s.Count <= 0 {
 				c.errorf(s.Pos, "limit count must be positive, found %d", s.Count)

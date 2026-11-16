@@ -133,6 +133,11 @@ func Validate(ch *compiler.Chunk) error {
 				return env.ErrBadBytecode
 			}
 			need, delta = 1, -1
+		case compiler.OpBudget:
+			if in.A < 0 || int(in.A) >= len(ch.Budgets) {
+				return env.ErrBadBytecode
+			}
+			need, delta = 1, -1
 		case compiler.OpDeny, compiler.OpReturn:
 			falls = false
 		default:
@@ -219,7 +224,7 @@ func Run(ch *compiler.Chunk, r *env.Request, budget int, d *env.Decision) {
 			stack[sp] = consts[in.A]
 			sp++
 		case compiler.OpLoadField:
-			stack[sp] = env.StringVal(r.Field(env.FieldID(in.A)))
+			stack[sp] = r.FieldValue(env.FieldID(in.A))
 			sp++
 		case compiler.OpCallBuiltin:
 			n := env.BuiltinArity[in.A]
@@ -304,6 +309,13 @@ func Run(ch *compiler.Chunk, r *env.Request, budget int, d *env.Decision) {
 		case compiler.OpSetHeader:
 			sp--
 			if !d.AddHeader(env.HeaderSet{Name: consts[in.A].S, Value: stack[sp].S}) {
+				d.Err, d.Steps = env.ErrTooMany, steps
+				return
+			}
+		case compiler.OpBudget:
+			sp--
+			bi := &ch.Budgets[in.A]
+			if !d.AddBudget(env.BudgetReq{ID: bi.ID, Amount: bi.Amount, Per: bi.Unit.Duration(), Key: stack[sp].S}) {
 				d.Err, d.Steps = env.ErrTooMany, steps
 				return
 			}

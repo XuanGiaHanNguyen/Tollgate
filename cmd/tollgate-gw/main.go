@@ -92,6 +92,7 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 			Peer:       peer.Config{MaxBatch: cl.Batch.Max, FlushInterval: cl.Batch.Flush, Timeout: cl.PeerTimeout},
 			Hooks:      peer.Hooks{RPC: m.PeerRPC},
 			OnDecision: m.RateLimitDecision,
+			Budget:     ratelimit.BudgetHooks{Expired: func(int64) { m.ReservationExpired() }},
 		})
 		if err != nil {
 			return err
@@ -102,7 +103,7 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 			return err
 		}
 		peerSrv = grpc.NewServer()
-		tollgatev1.RegisterRateLimitServiceServer(peerSrv, &peer.Server{Store: lim.Local()})
+		tollgatev1.RegisterRateLimitServiceServer(peerSrv, &peer.Server{Store: lim.Local(), Budget: lim.Budgets()})
 		go func() {
 			if err := peerSrv.Serve(ln); err != nil {
 				log.Error("peer gRPC server stopped", "err", err)
@@ -133,6 +134,10 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 					log.Error("rules not loaded; keeping the previous version", "file", path, "err", err.Error())
 					return
 				}
+				if err := gw.CheckRules(rs); err != nil {
+					log.Error("rules not loaded; keeping the previous version", "file", path, "err", err.Error())
+					return
+				}
 				v := gw.SetRules(rs)
 				log.Info("rules loaded", "file", path, "version", v, "routes", len(rs.Routes), "engine", cfg.Rules.Engine)
 				for _, w := range rs.Warnings {
@@ -156,6 +161,10 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 	})
 
 	admin.Handle("GET /metrics", m.Handler())
+	admin.HandleFunc("GET /admin/budgets", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(gw.BudgetStats())
+	})
 	admin.HandleFunc("GET /admin/rules", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"version": gw.RulesVersion(), "file": cfg.Rules.File, "engine": cfg.Rules.Engine})

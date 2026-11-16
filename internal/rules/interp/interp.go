@@ -75,6 +75,14 @@ func (e *evaluator) stmts(ss []ast.Stmt) {
 		case *ast.Deny:
 			e.d.Deny = int(s.Status)
 			e.done = true
+		case *ast.Budget:
+			k := e.expr(s.Key)
+			if e.done {
+				return
+			}
+			if !e.d.AddBudget(env.BudgetReq{ID: s.ID, Amount: s.Amount, Per: s.Unit.Duration(), Key: k.S}) {
+				e.fail(env.ErrTooMany)
+			}
 		case *ast.SetHeader:
 			v := e.expr(s.Value)
 			if e.done {
@@ -101,7 +109,7 @@ func (e *evaluator) expr(x ast.Expr) env.Value {
 	case *ast.Ident:
 		return e.expr(e.lets[x.Name])
 	case *ast.Field:
-		return env.StringVal(e.r.Field(env.FieldID(x.ID)))
+		return e.r.FieldValue(env.FieldID(x.ID))
 	case *ast.Call:
 		if x.ConstPrefix {
 			ip := e.expr(x.Args[0])

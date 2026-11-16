@@ -1,0 +1,10 @@
+1:1: error: types: "body" is predeclared (the request body) and cannot be redefined
+3:3: error: types: provider names must be non-empty and unique
+4:3: error: types: hedge max must be in (0, 100]%, found 150%
+5:3: error: types: block_patterns action must be redact, block or flag, found "shout"
+6:25: error: types: route settings (providers, hedge, block_patterns) must be at the top level of a route, not inside when
+7:30: error: types: budget key must be a string, found int
+8:27: error: types: cannot compare int with string
+9:24: error: types: argument 1 of tokens.estimate must be string, found int
+14:3: error: types: providers already set for this route at 13:3
+12:3: error: types: hedge needs at least two providers on the route

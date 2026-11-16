@@ -9,6 +9,11 @@ service RateLimitService {
   // CheckLimits applies a batch of limit checks on the owner node. Results
   // come back in request order.
   rpc CheckLimits(CheckLimitsRequest) returns (CheckLimitsResponse);
+  // Reserve holds an estimated cost against a budget on its owner node.
+  // Retrying with the same reservation_id returns the first answer.
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+  // Settle charges the real cost for a reservation; idempotent by ID.
+  rpc Settle(SettleRequest) returns (SettleResponse);
 }
 
 enum Algorithm {
@@ -34,4 +39,30 @@ message CheckLimitsRequest {
 
 message CheckLimitsResponse {
   repeated bool allowed = 1;
+}
+
+message ReserveRequest {
+  string reservation_id = 1;
+  int32 budget_id = 2;
+  string key = 3;
+  int64 estimate_micro_usd = 4;
+  int64 amount_micro_usd = 5; // budget size per period
+  int64 per_ns = 6;
+  int64 ttl_ns = 7; // hold is released at this deadline if never settled
+}
+
+message ReserveResponse {
+  bool ok = 1;
+  int64 balance_micro_usd = 2;
+}
+
+message SettleRequest {
+  string reservation_id = 1;
+  int32 budget_id = 2;
+  string key = 3;
+  int64 actual_micro_usd = 4;
+}
+
+message SettleResponse {
+  bool applied = 1;
 }

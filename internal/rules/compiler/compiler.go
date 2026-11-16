@@ -65,6 +65,7 @@ const (
 	OpLimit       // pop key; record Limits[A]
 	OpDeny        // deny with status A and return
 	OpSetHeader   // pop value; record header named Consts[A]
+	OpBudget      // pop key; record Budgets[A]
 	OpReturn
 	NumOps
 )
@@ -74,7 +75,7 @@ var opNames = [...]string{
 	"ADD", "SUB", "MUL", "DIV", "NEG", "NOT", "AND", "OR", "JUMP", "JUMP_IF_FALSE", "JUMP_IF_TRUE",
 	"FIELD_EQ_CONST", "FIELD_NE_CONST", "HEADER_EQ_CONST", "HEADER_NE_CONST", "CIDR_FIELD",
 	"JUMP_IF_FIELD_EQ", "JUMP_IF_FIELD_NE", "JUMP_IF_HEADER_EQ", "JUMP_IF_HEADER_NE", "JUMP_IF_CIDR", "JUMP_IF_NOT_CIDR",
-	"REQUIRE_AUTH", "LIMIT", "DENY", "SET_HEADER", "RETURN",
+	"REQUIRE_AUTH", "LIMIT", "DENY", "SET_HEADER", "BUDGET", "RETURN",
 }
 
 func (o Op) String() string {
@@ -101,6 +102,13 @@ type LimitInfo struct {
 	Algo  uint8
 }
 
+// BudgetInfo is the static part of a budget statement.
+type BudgetInfo struct {
+	ID     int
+	Amount int64
+	Unit   ast.Unit
+}
+
 // Prefix is a pre-parsed constant CIDR (OK=false: invalid, never matches).
 type Prefix struct {
 	P  netip.Prefix
@@ -112,6 +120,7 @@ type Chunk struct {
 	Code     []Instr
 	Consts   []env.Value
 	Limits   []LimitInfo
+	Budgets  []BudgetInfo
 	Prefixes []Prefix
 	MaxStack int // deepest stack the code can reach
 }
@@ -202,6 +211,11 @@ func (c *compiler) stmts(ss []ast.Stmt) {
 		case *ast.SetHeader:
 			c.expr(s.Value)
 			c.emit(OpSetHeader, c.str(s.Name), 0, 0)
+			c.push(-1)
+		case *ast.Budget:
+			c.expr(s.Key)
+			c.ch.Budgets = append(c.ch.Budgets, BudgetInfo{ID: s.ID, Amount: s.Amount, Unit: s.Unit})
+			c.emit(OpBudget, int32(len(c.ch.Budgets)-1), 0, 0)
 			c.push(-1)
 		}
 	}
@@ -435,6 +449,9 @@ func (ch *Chunk) Disassemble() string {
 		switch in.Op {
 		case OpPushConst, OpSetHeader:
 			line += " " + str(in.A)
+		case OpBudget:
+			bi := ch.Budgets[in.A]
+			line += fmt.Sprintf(" #%d %d/%s", bi.ID, bi.Amount, bi.Unit)
 		case OpLimit:
 			l := ch.Limits[in.A]
 			line += fmt.Sprintf(" #%d %d/%s", l.ID, l.Count, l.Unit)

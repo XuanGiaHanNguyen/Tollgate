@@ -1,4 +1,5 @@
-# M4 topology: 3 gateways (cluster rate limiting) + 3 mock backends, Prometheus and Grafana.
+# M5 topology: 3 gateways (cluster rate limiting) + 3 mock backends + 2 mock LLM
+# providers (provider-a, provider-b), Prometheus and Grafana.
 # Gateways: localhost:8080-8082 (admin 9090-9092).
 # Later milestones add control plane, more gateways, mockllm and observability.
 name: tollgate
@@ -18,7 +19,7 @@ services:
       - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
       - ./rules.tg:/etc/tollgate/rules.tg:ro
     ports: ["8080:8080", "9090:9090"]
-    depends_on: [backend-1, backend-2, backend-3]
+    depends_on: [backend-1, backend-2, backend-3, provider-a, provider-b]
 
   gateway-2:
     build: {context: .., args: {BIN: tollgate-gw}}
@@ -28,7 +29,7 @@ services:
       - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
       - ./rules.tg:/etc/tollgate/rules.tg:ro
     ports: ["8081:8080", "9091:9090"]
-    depends_on: [backend-1, backend-2, backend-3]
+    depends_on: [backend-1, backend-2, backend-3, provider-a, provider-b]
 
   gateway-3:
     build: {context: .., args: {BIN: tollgate-gw}}
@@ -38,7 +39,7 @@ services:
       - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
       - ./rules.tg:/etc/tollgate/rules.tg:ro
     ports: ["8082:8080", "9092:9090"]
-    depends_on: [backend-1, backend-2, backend-3]
+    depends_on: [backend-1, backend-2, backend-3, provider-a, provider-b]
 
   backend-1:
     <<: *backend
@@ -49,6 +50,16 @@ services:
   backend-3:
     <<: *backend
     command: ["-addr", ":9000", "-name", "backend-3"]
+
+  provider-a:
+    build: {context: .., args: {BIN: mockllm}}
+    image: tollgate/mockllm:dev
+    command: ["-addr", ":9200", "-name", "provider-a", "-ttft-median", "300ms", "-tail-prob", "0.05", "-tail-mult", "8",
+              "-inject", "secret code,home address", "-inject-prob", "0.1"]
+  provider-b:
+    image: tollgate/mockllm:dev
+    command: ["-addr", ":9200", "-name", "provider-b", "-ttft-median", "350ms", "-tail-prob", "0.05", "-tail-mult", "8", "-seed", "2"]
+    depends_on: [provider-a]
 
   prometheus:
     image: prom/prometheus:v3.5.0

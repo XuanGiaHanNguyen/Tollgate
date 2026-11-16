@@ -12,7 +12,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 | M2 Metrics and first numbers | done: see [`docs/METRICS.md`](docs/METRICS.md) |
 | M3 Rule language | done: bytecode VM 2.56× faster than a fair interpreter on large rule sets (goal was 3×; see METRICS.md) |
 | M4 Distributed rate limiting | done: 3 gateways over-admit +0.07% vs the limit; limits hold when a node dies (see METRICS.md) |
-| M5 AI gateway | not started |
+| M5 AI gateway | done: cost budgets hold within 0.3% (vs +15% for count limits); hedging cuts TTFT p99 49% for +0.77% cost; filter catches 100% of split phrases (see METRICS.md) |
 | M6 Raft control plane | not started |
 | M7 Safe rollout | not started |
 | M8 AWS and polish | not started |
@@ -34,3 +34,10 @@ make down
 ```
 
 Gateway config is YAML (`deploy/gateway.yaml`); policy (auth, limits, deny, headers) is written in the rule language (`deploy/rules.tg`) and hot-reloaded. Try it with the demo keys: `curl -H 'Authorization: Bearer demo-free-key' localhost:8080/api/ai/chat`.
+
+AI route (M5), streaming through the mock providers with budgets, hedging and the safety filter:
+
+```sh
+curl -N -H 'Authorization: Bearer demo-pro-key' localhost:8080/v1/chat/completions \
+  -d '{"model":"m","max_tokens":50,"stream":true,"messages":[{"role":"user","content":"hi"}]}'
+```

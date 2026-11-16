@@ -1,5 +1,5 @@
 COMPOSE := docker compose -f deploy/docker-compose.yml
-BINS := tollgate-gw mockbackend
+BINS := tollgate-gw mockbackend mockllm
 
 .PHONY: build test race vet fmt-check up down logs chaos-kill-backend chaos-kill-backend-local bench-e1 bench-e2 bench-e7 report fuzz-smoke
 
@@ -55,3 +55,4 @@ fuzz-smoke:
 	go test ./internal/rules/parser -run '^$$' -fuzz FuzzParser -fuzztime $(FUZZ_TIME)
 	go test ./internal/rules -run '^$$' -fuzz FuzzVMBudget -fuzztime $(FUZZ_TIME)
 	go test ./internal/rules -run '^$$' -fuzz FuzzDifferential -fuzztime $(FUZZ_TIME)
+	go test ./internal/ai/filter -run '^$$' -fuzz FuzzSplitPatterns -fuzztime $(FUZZ_TIME)

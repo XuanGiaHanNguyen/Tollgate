@@ -6,6 +6,8 @@ package env
 
 import (
 	"errors"
+
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ai/tokens"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -66,17 +68,24 @@ const (
 	FieldRequestMethod
 	FieldRequestPath
 	FieldRequestHost
+	FieldRequestModel
+	FieldRequestMaxTokens // int
+	FieldRequestBody
 	numFields
 )
 
 var fieldNames = map[string]FieldID{
 	"user.id": FieldUserID, "user.tier": FieldUserTier, "client.ip": FieldClientIP,
 	"request.method": FieldRequestMethod, "request.path": FieldRequestPath, "request.host": FieldRequestHost,
+	"request.model": FieldRequestModel, "request.max_tokens": FieldRequestMaxTokens, "request.body": FieldRequestBody,
 }
 
-// LookupField resolves "obj.name". All fields are strings in M3.
+// LookupField resolves "obj.name" and its type.
 func LookupField(obj, name string) (FieldID, Type, bool) {
 	id, ok := fieldNames[obj+"."+name]
+	if id == FieldRequestMaxTokens {
+		return id, Int, ok
+	}
 	return id, String, ok
 }
 
@@ -93,6 +102,9 @@ type Request struct {
 	Host          string
 	Header        http.Header
 	RawQuery      string
+	Model         string // AI routes: parsed from the request body
+	MaxTokens     int64
+	Body          string
 
 	// client IP parsed on first use, so many cidr_match calls in one
 	// evaluation parse it once
@@ -125,8 +137,20 @@ func (r *Request) Field(id FieldID) string {
 		return r.Path
 	case FieldRequestHost:
 		return r.Host
+	case FieldRequestModel:
+		return r.Model
+	case FieldRequestBody:
+		return r.Body
 	}
 	return ""
+}
+
+// FieldValue returns a field as a typed value.
+func (r *Request) FieldValue(id FieldID) Value {
+	if id == FieldRequestMaxTokens {
+		return IntVal(r.MaxTokens)
+	}
+	return StringVal(r.Field(id))
 }
 
 // ---- builtins ----
@@ -138,6 +162,7 @@ const (
 	BuiltinHeader BuiltinID = iota
 	BuiltinQuery
 	BuiltinCIDRMatch
+	BuiltinTokensEstimate
 )
 
 // Builtin describes a built-in's signature.
@@ -149,16 +174,17 @@ type Builtin struct {
 }
 
 var builtins = map[string]Builtin{
-	"header":     {BuiltinHeader, "header", []Type{String}, String},
-	"query":      {BuiltinQuery, "query", []Type{String}, String},
-	"cidr_match": {BuiltinCIDRMatch, "cidr_match", []Type{String, String}, Bool},
+	"header":          {BuiltinHeader, "header", []Type{String}, String},
+	"query":           {BuiltinQuery, "query", []Type{String}, String},
+	"cidr_match":      {BuiltinCIDRMatch, "cidr_match", []Type{String, String}, Bool},
+	"tokens.estimate": {BuiltinTokensEstimate, "tokens.estimate", []Type{String}, Int},
 }
 
 // NumFields is the number of request fields (bytecode verification).
 const NumFields = int(numFields)
 
 // BuiltinArity is the argument count of each built-in, indexed by ID.
-var BuiltinArity = [...]int{BuiltinHeader: 1, BuiltinQuery: 1, BuiltinCIDRMatch: 2}
+var BuiltinArity = [...]int{BuiltinHeader: 1, BuiltinQuery: 1, BuiltinCIDRMatch: 2, BuiltinTokensEstimate: 1}
 
 // LookupBuiltin resolves a built-in by name.
 func LookupBuiltin(name string) (Builtin, bool) {
@@ -179,6 +205,8 @@ func Call(id BuiltinID, args []Value, r *Request) Value {
 		return StringVal(r.Query(args[0].S))
 	case BuiltinCIDRMatch:
 		return BoolVal(r.cidrMatch(args[0].S, args[1].S))
+	case BuiltinTokensEstimate:
+		return IntVal(tokens.Estimate(args[0].S))
 	}
 	return Value{}
 }
@@ -321,6 +349,17 @@ type LimitReq struct {
 	Algo  uint8 // AlgoTokenBucket or AlgoSlidingWindow
 }
 
+// MaxBudgets caps budgets per evaluation.
+const MaxBudgets = 4
+
+// BudgetReq is one cost budget that applies to this request.
+type BudgetReq struct {
+	ID     int   // unique per program, like LimitReq.ID
+	Amount int64 // micro-USD per period
+	Per    time.Duration
+	Key    string
+}
+
 // HeaderSet is one header to add.
 type HeaderSet struct{ Name, Value string }
 
@@ -331,6 +370,8 @@ type Decision struct {
 	NLimits  int
 	Headers  [MaxHeaders]HeaderSet
 	NHeaders int
+	Budgets  [MaxBudgets]BudgetReq
+	NBudgets int
 	Steps    int   // instructions (VM) or nodes (interpreter) executed
 	Err      error // non-nil: evaluation failed; callers fail closed
 }
@@ -342,6 +383,16 @@ func (d *Decision) AddLimit(l LimitReq) bool {
 	}
 	d.Limits[d.NLimits] = l
 	d.NLimits++
+	return true
+}
+
+// AddBudget appends a budget, reporting false when the cap is reached.
+func (d *Decision) AddBudget(b BudgetReq) bool {
+	if d.NBudgets == MaxBudgets {
+		return false
+	}
+	d.Budgets[d.NBudgets] = b
+	d.NBudgets++
 	return true
 }
 
@@ -358,7 +409,7 @@ func (d *Decision) AddHeader(h HeaderSet) bool {
 // SameOutcome compares the observable parts of two decisions (not Steps),
 // used by differential tests.
 func (d *Decision) SameOutcome(o *Decision) bool {
-	if (d.Err == nil) != (o.Err == nil) || d.Deny != o.Deny || d.NLimits != o.NLimits || d.NHeaders != o.NHeaders {
+	if (d.Err == nil) != (o.Err == nil) || d.Deny != o.Deny || d.NLimits != o.NLimits || d.NHeaders != o.NHeaders || d.NBudgets != o.NBudgets {
 		return false
 	}
 	if d.Err != nil {
@@ -371,6 +422,11 @@ func (d *Decision) SameOutcome(o *Decision) bool {
 	}
 	for i := 0; i < d.NHeaders; i++ {
 		if d.Headers[i] != o.Headers[i] {
+			return false
+		}
+	}
+	for i := 0; i < d.NBudgets; i++ {
+		if d.Budgets[i] != o.Budgets[i] {
 			return false
 		}
 	}

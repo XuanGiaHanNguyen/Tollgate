@@ -4,6 +4,10 @@ admin_listen: "127.0.0.1:19090"
 shutdown_timeout: 15s
 retry_budget: {ratio: 0.2, initial: 10}
 upstreams:
+  - name: provider-a
+    targets: [{url: "http://127.0.0.1:9201"}]
+  - name: provider-b
+    targets: [{url: "http://127.0.0.1:9202"}]
   - name: api
     balancer: round_robin
     targets:
@@ -19,6 +23,11 @@ upstreams:
     passive: {consecutive_failures: 5, eject_duration: 10s}
     breaker: {window: 10s, min_requests: 20, error_rate: 0.5, cooldown: 5s, half_open_probes: 3}
 routes:
+  - name: ai
+    type: ai
+    prefix: /v1/
+    upstream: provider-a
+    timeouts: {connect: 1s, header: 30s, total: 120s}
   - name: api
     prefix: /
     upstream: api
@@ -31,3 +40,9 @@ auth:
   api_keys:
     - {key: demo-free-key, user_id: alice, tier: free}
     - {key: demo-pro-key, user_id: bob, tier: pro}
+ai:
+  reservation_ttl: 2m
+  pricing:
+    "*": {input_per_1k_usd: 1.0, output_per_1k_usd: 3.0}
+  pattern_sets:
+    kid-safety: ["secret code", "home address", "phone number"]

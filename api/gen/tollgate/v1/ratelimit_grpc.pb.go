@@ -20,6 +20,8 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	RateLimitService_CheckLimits_FullMethodName = "/tollgate.v1.RateLimitService/CheckLimits"
+	RateLimitService_Reserve_FullMethodName     = "/tollgate.v1.RateLimitService/Reserve"
+	RateLimitService_Settle_FullMethodName      = "/tollgate.v1.RateLimitService/Settle"
 )
 
 // RateLimitServiceClient is the client API for RateLimitService service.
@@ -31,6 +33,11 @@ type RateLimitServiceClient interface {
 	// CheckLimits applies a batch of limit checks on the owner node. Results
 	// come back in request order.
 	CheckLimits(ctx context.Context, in *CheckLimitsRequest, opts ...grpc.CallOption) (*CheckLimitsResponse, error)
+	// Reserve holds an estimated cost against a budget on its owner node.
+	// Retrying with the same reservation_id returns the first answer.
+	Reserve(ctx context.Context, in *ReserveRequest, opts ...grpc.CallOption) (*ReserveResponse, error)
+	// Settle charges the real cost for a reservation; idempotent by ID.
+	Settle(ctx context.Context, in *SettleRequest, opts ...grpc.CallOption) (*SettleResponse, error)
 }
 
 type rateLimitServiceClient struct {
@@ -51,6 +58,26 @@ func (c *rateLimitServiceClient) CheckLimits(ctx context.Context, in *CheckLimit
 	return out, nil
 }
 
+func (c *rateLimitServiceClient) Reserve(ctx context.Context, in *ReserveRequest, opts ...grpc.CallOption) (*ReserveResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReserveResponse)
+	err := c.cc.Invoke(ctx, RateLimitService_Reserve_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rateLimitServiceClient) Settle(ctx context.Context, in *SettleRequest, opts ...grpc.CallOption) (*SettleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SettleResponse)
+	err := c.cc.Invoke(ctx, RateLimitService_Settle_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RateLimitServiceServer is the server API for RateLimitService service.
 // All implementations must embed UnimplementedRateLimitServiceServer
 // for forward compatibility.
@@ -60,6 +87,11 @@ type RateLimitServiceServer interface {
 	// CheckLimits applies a batch of limit checks on the owner node. Results
 	// come back in request order.
 	CheckLimits(context.Context, *CheckLimitsRequest) (*CheckLimitsResponse, error)
+	// Reserve holds an estimated cost against a budget on its owner node.
+	// Retrying with the same reservation_id returns the first answer.
+	Reserve(context.Context, *ReserveRequest) (*ReserveResponse, error)
+	// Settle charges the real cost for a reservation; idempotent by ID.
+	Settle(context.Context, *SettleRequest) (*SettleResponse, error)
 	mustEmbedUnimplementedRateLimitServiceServer()
 }
 
@@ -72,6 +104,12 @@ type UnimplementedRateLimitServiceServer struct{}
 
 func (UnimplementedRateLimitServiceServer) CheckLimits(context.Context, *CheckLimitsRequest) (*CheckLimitsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckLimits not implemented")
+}
+func (UnimplementedRateLimitServiceServer) Reserve(context.Context, *ReserveRequest) (*ReserveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Reserve not implemented")
+}
+func (UnimplementedRateLimitServiceServer) Settle(context.Context, *SettleRequest) (*SettleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Settle not implemented")
 }
 func (UnimplementedRateLimitServiceServer) mustEmbedUnimplementedRateLimitServiceServer() {}
 func (UnimplementedRateLimitServiceServer) testEmbeddedByValue()                          {}
@@ -112,6 +150,42 @@ func _RateLimitService_CheckLimits_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RateLimitService_Reserve_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReserveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RateLimitServiceServer).Reserve(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RateLimitService_Reserve_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RateLimitServiceServer).Reserve(ctx, req.(*ReserveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RateLimitService_Settle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SettleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RateLimitServiceServer).Settle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RateLimitService_Settle_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RateLimitServiceServer).Settle(ctx, req.(*SettleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RateLimitService_ServiceDesc is the grpc.ServiceDesc for RateLimitService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -122,6 +196,14 @@ var RateLimitService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckLimits",
 			Handler:    _RateLimitService_CheckLimits_Handler,
+		},
+		{
+			MethodName: "Reserve",
+			Handler:    _RateLimitService_Reserve_Handler,
+		},
+		{
+			MethodName: "Settle",
+			Handler:    _RateLimitService_Settle_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

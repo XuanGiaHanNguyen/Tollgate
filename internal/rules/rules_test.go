@@ -119,7 +119,7 @@ type gen struct {
 
 var (
 	strConsts  = []string{`""`, `"free"`, `"pro"`, `"u1"`, `"10.1.2.3"`, `"GET"`, `"x"`}
-	strFields  = []string{"user.id", "user.tier", "client.ip", "request.method", "request.path", "request.host"}
+	strFields  = []string{"user.id", "user.tier", "client.ip", "request.method", "request.path", "request.host", "request.model", "body"}
 	headerArgs = []string{`"X-A"`, `"x-b"`, `"X-Debug"`}
 	queryArgs  = []string{`"q"`, `"debug"`}
 	cidrs      = []string{`"10.0.0.0/8"`, `"192.168.0.0/16"`, `"bad"`}
@@ -144,8 +144,13 @@ func (g *gen) strExpr(depth int) string {
 
 func (g *gen) intExpr(depth int) string {
 	if depth <= 0 || g.r.IntN(3) == 0 {
-		if len(g.intLets) > 0 && g.r.IntN(3) == 0 {
+		switch {
+		case len(g.intLets) > 0 && g.r.IntN(3) == 0:
 			return g.pick(g.intLets)
+		case g.r.IntN(4) == 0:
+			return "request.max_tokens" // runtime int
+		case g.r.IntN(6) == 0:
+			return "tokens.estimate(" + g.strExpr(0) + ")"
 		}
 		return fmt.Sprint(g.r.IntN(20) - 5)
 	}
@@ -220,6 +225,11 @@ func (g *gen) stmts(depth, n int, indent string) {
 				fmt.Fprintf(&g.b, "%sdeny %d\n", indent, 400+g.r.IntN(200))
 				continue
 			}
+			if g.r.IntN(2) == 0 {
+				fmt.Fprintf(&g.b, "%sbudget %d.%02d usd per %s by %s\n", indent, 1+g.r.IntN(9), g.r.IntN(100),
+					g.pick([]string{"minute", "hour", "day"}), g.strExpr(1))
+				continue
+			}
 			fallthrough
 		default:
 			fmt.Fprintf(&g.b, "%sset_header \"X-H%d\" %s\n", indent, g.r.IntN(3), g.strExpr(1))
@@ -268,6 +278,9 @@ func randomRequest(r *rand.Rand) *env.Request {
 		Host:          pick("a", "b"),
 		Header:        h,
 		RawQuery:      pick("", "q=x", "debug=1&q=free", "q=%66ree", "q"),
+		Model:         pick("", "small", "large"),
+		MaxTokens:     int64(r.IntN(3000)) - 5,
+		Body:          pick("", `{"messages":[{"content":"hi"}]}`, strings.Repeat("word ", 300)),
 	}
 }
 

@@ -1,0 +1,9 @@
+route "/v1/chat/*" {
+  require auth
+  providers ["provider-a", "provider-b"]
+  hedge after p95 max 5%
+  block_patterns "kid-safety" action redact
+  budget 5.00 usd per day by user.id
+  when request.model == "large" && request.max_tokens > 1000 { budget 1.5 usd per hour by user.id }
+  when tokens.estimate(body) > 4000 { deny 413 }
+}
