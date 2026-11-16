@@ -32,6 +32,7 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", "tollgate.yaml", "path to gateway config")
+	cfgEnv := flag.String("config-env", "", "read the YAML config from this environment variable instead of -config (ECS tasks)")
 	logLevel := flag.String("log-level", "info", "debug, info, warn or error")
 	clusterSelf := flag.String("cluster-self", "", "override cluster.self, so one config file serves every gateway")
 	node := flag.String("node", "", "node name used in metric labels (default: cluster.self, $TOLLGATE_NODE or hostname)")
@@ -44,6 +45,19 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 	slog.SetDefault(log)
 
+	if *cfgEnv != "" {
+		// Write the env config to a temp file so relative paths (rules
+		// cache) still have a directory.
+		dir, err := os.MkdirTemp("", "tollgate-gw-")
+		if err == nil {
+			*cfgPath = filepath.Join(dir, "gateway.yaml")
+			err = os.WriteFile(*cfgPath, []byte(os.Getenv(*cfgEnv)), 0o600)
+		}
+		if err != nil || os.Getenv(*cfgEnv) == "" {
+			log.Error("config from environment not usable", "var", *cfgEnv, "err", err)
+			os.Exit(1)
+		}
+	}
 	if err := run(*cfgPath, *node, *clusterSelf, log); err != nil {
 		log.Error("exit", "err", err)
 		os.Exit(1)
