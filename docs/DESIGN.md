@@ -414,3 +414,26 @@ The deterministic simulator covers the replicated store (including `txn`), not t
 
   The canary served good rules afterwards in every case.
 - **Exposure is 1/N, not under it.** During the rollout the candidate served **33% of requests** (the canary's round-robin share), i.e. 41–48 bad responses for the deny config and 113–115 slow ones, versus 100% of traffic until a human reverts when pushing everywhere. The spec goal "under 1/N" is **not met**: with an equal-weight load balancer the canary always gets exactly 1/N. Getting below it needs the ALB or load balancer to weight the canary lower (e.g. 5%); recorded as a follow-up for M8, where the ALB sits in front of the gateways.
+
+## M8: decisions log
+
+- **No AWS spend.** The user chose not to deploy. The Terraform (`deploy/terraform/`) is complete and `terraform validate`d, with a cost estimate and a budget alert, but never applied; M8's apply/destroy acceptance is therefore **not met**. Clean-environment numbers come from GitHub-hosted runners instead (free for this public repo), labelled `ci-runner` and kept separate from laptop numbers.
+- **The ALB weights the canary at 5%.** On AWS the canary gateway sits alone in a target group weighted `canary_weight` (default 5) against the others. That is the fix for E11's 1/N exposure, but it is **untested** because nothing was applied.
+- **First docker-compose run in Docker** (CI runner): it found that all three control nodes crashed with `open /data/wal.log: permission denied`. The distroless images run as uid 65532 and a fresh named volume is root-owned. The image now ships a nonroot-owned `/data`. With that, `deploy/compose-check.sh` passes end to end, including M1's kill-a-backend acceptance (open since M1 because Docker was not installed locally).
+- **No hand-typed numbers in the README.** `bench/report.go` regenerates the README's results table from the result files, alongside METRICS.md.
+- **Bench workflow trigger.** GitHub only dispatches workflows that exist on the default branch; with the milestone PRs unmerged, editing `bench/ci-run` triggers the run instead.
+
+## Project-wide tradeoffs (summary)
+
+| Choice | Bought | Cost | Would revisit |
+| --- | --- | --- | --- |
+| Lock-free hot path (atomics, precomputed WRR schedule, per-route metric handles) | ~25 µs in-gateway overhead p50 at 15k req/s (laptop) | approximate breaker windows at bucket boundaries | no |
+| Bytecode VM + verifier, fair interpreter baseline | 2.5×+ on large rule sets, 0 allocs | ~1× on tiny rule sets; missed the 3× goal | superinstructions for more shapes; register VM |
+| Rules shipped as source, compiled on each gateway | no bytecode wire format or versioning | every gateway compiles each change (inside the ~5 ms propagation) | only if compile cost grows |
+| Hash-ring limiter with per-peer batching and degraded fallback (limit/N) | +0.07% over-admission with 3 nodes; limits hold when a node dies | fallback buckets start full (small bursts); ~0.5 ms batching delay | adaptive batching (flush on idle) |
+| Reserve the full `max_tokens` estimate | never over budget without crashes | holds ~80–90% above real cost, some affordable requests refused | reserve a percentile of output length, settle the rest |
+| Release holds at their deadline | budgets never leak | a crashed stream's partial cost is never charged (E8 kill run) | charge the prompt cost on expiry |
+| Hedge after p95 | p99 TTFT halved for <1% cost | can never hedge more than ~5% of requests | adaptive trigger quantile |
+| Raft as a pure state machine + deterministic simulation | 5,000-seed runs, replayable failures, mutation-checked | simulation can't cover wall-clock parts (rollout controller) | add a fake clock to the controller |
+| PreVote | restarts no longer depose a healthy leader | calmer elections hide rare bugs from the simulator (hence alternating seeds) | keep both configurations in simulation |
+| Canary by gateway, compare error rate and p99 | bad configs rolled back in ~1–3 s, across a leader kill | equal round robin exposes 1/N; needs a weighted LB | weight canaries in the LB everywhere |
