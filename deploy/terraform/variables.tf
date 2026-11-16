@@ -49,3 +49,9 @@ variable "gateway_memory" {
   type        = number
   default     = 2048
 }
+
+variable "enable_aws" {
+  description = "Cost switch. Off by default: plan/apply stop before creating anything. Set -var enable_aws=true only when you mean to pay for a session; destroy works either way."
+  type        = bool
+  default     = false
+}

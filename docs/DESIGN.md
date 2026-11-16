@@ -443,3 +443,7 @@ The deterministic simulator covers the replicated store (including `txn`), not t
 | Raft as a pure state machine + deterministic simulation | 5,000-seed runs, replayable failures, mutation-checked | simulation can't cover wall-clock parts (rollout controller) | add a fake clock to the controller |
 | PreVote | restarts no longer depose a healthy leader | calmer elections hide rare bugs from the simulator (hence alternating seeds) | keep both configurations in simulation |
 | Canary by gateway, compare error rate and p99 | bad configs rolled back in ~1–3 s, across a leader kill | equal round robin exposes 1/N; needs a weighted LB | weight canaries in the LB everywhere |
+
+### M8 follow-up: Terraform cost switch (2026-11-16)
+
+Goal: nobody pays for AWS by accident. Options considered: (a) `count` on every billable resource (touches every file, and a half-off stack still bills the ALB and NAT); (b) a validation on the variable (also blocks `destroy`, which is when you most need it); (c) a lifecycle precondition on a `terraform_data` guard. Chose (c): `enable_aws` defaults to `false`, so the plan fails before anything is created, and `destroy` still runs because preconditions are only checked on create and update. `deploy/terraform/tests/cost_guard.tftest.hcl` covers both settings with a mock provider.

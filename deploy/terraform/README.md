@@ -2,6 +2,8 @@
 
 **Status: written and `terraform validate`d, never applied.** No AWS resources have been created from this repo. Applying it costs money; read the cost section first.
 
+**Cost switch: off by default.** `enable_aws` defaults to `false`, and `terraform plan`/`apply` then stop with an error before creating anything. Pass `-var enable_aws=true` only for a session you mean to pay for. `terraform destroy` works with the switch either way. `terraform test` checks this offline with a mock provider (no credentials, nothing created).
+
 ## What it builds
 
 - VPC with 2 public subnets (ALB, NAT) and 2 private subnets (all tasks); one NAT gateway.
@@ -37,7 +39,7 @@ A 2-hour benchmark session is roughly $1; leaving it up for a month would be rou
 export AWS_PROFILE=...          # credentials stay in your environment
 cd deploy/terraform
 terraform init
-terraform apply -var allowed_cidr=$(curl -s https://checkip.amazonaws.com)/32 -var budget_email=you@example.com
+terraform apply -var enable_aws=true -var allowed_cidr=$(curl -s https://checkip.amazonaws.com)/32 -var budget_email=you@example.com
 
 # push images (from the repo root)
 REG=$(terraform -chdir=deploy/terraform output -json ecr_repositories | jq -r '."tollgate-gw"' | cut -d/ -f1)
