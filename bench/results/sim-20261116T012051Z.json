@@ -1,0 +1,63 @@
+{
+  "experiment": "SIM",
+  "started_at": "2026-11-16T01:20:51.457278187Z",
+  "finished_at": "2026-11-16T01:28:39.58837574Z",
+  "env": {
+    "mode": "ci-runner",
+    "git_commit": "64faf2bafcf974c88ee31543f4f0a6927575f311",
+    "git_dirty": false,
+    "machine": "Virtual Machine",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "cpus": 4,
+    "memory_gb": 0,
+    "os": "linux/amd64",
+    "go_version": "go1.26.0",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 3,
+    "topology": "single process (deterministic simulation)",
+    "load_avg_1m_at_start": "0.67",
+    "note": "GitHub Actions hosted runner, run 43785689025"
+  },
+  "params": {
+    "faults": "message drop/delay/duplicate/reorder, one- and two-way partitions, crashes incl. between step and persist; intensity varies per seed; PreVote on even seeds",
+    "invariants": "election safety, state machine safety (entry and state hash per index), snapshot consistency, liveness after healing",
+    "mutants": "bench/sim/mutants.py: five planted Raft bugs, each must be caught",
+    "reps": 3,
+    "seeds_per_suite": 5000,
+    "suites": "TestSeeds (KV machine) and TestSeedsStore (control-plane config store)"
+  },
+  "summary": {
+    "all_mutants_caught": true,
+    "mutants": [
+      "vote ignores log up-to-date check: caught -\u003e sim_test.go:23: seed 1 tick 243: state machine safety: node 2 applied (term 5, \"\") at index 12, another node applied (term 4, \"k6=v14\")",
+      "vote and pre-vote ignore log up-to-date check: caught -\u003e sim_test.go:23: seed 1 tick 243: state machine safety: node 2 applied (term 5, \"\") at index 12, another node applied (term 4, \"k6=v14\")",
+      "commit earlier-term entries by count (Figure 8): caught -\u003e sim_test.go:23: seed 1061 tick 726: state machine safety: node 3 applied (term 21, \"\") at index 46, another node applied (term 14, \"k2=v48\")",
+      "no step-down on higher term: caught -\u003e sim_test.go:23: seed 10 tick 2200: liveness: write @305 not applied on every node within 200 ticks after healing: [{ID:1 Term:23 Lead:2 Commit:305 App",
+      "vote granted twice in a term: caught -\u003e sim_test.go:23: seed 1 tick 22: election safety: nodes 2 and 3 both leader in term 1"
+    ],
+    "seconds": 445.1,
+    "suites": [
+      {
+        "committed": 1735903,
+        "crashes": 225274,
+        "dropped": 6750018,
+        "elections": 74339,
+        "partitions": 33806,
+        "seeds": 5000,
+        "snapshot_installs": 17694,
+        "snapshots": 114580
+      },
+      {
+        "committed": 1737432,
+        "crashes": 225875,
+        "dropped": 6759229,
+        "elections": 74255,
+        "partitions": 33705,
+        "seeds": 5000,
+        "snapshot_installs": 17586,
+        "snapshots": 115047
+      }
+    ]
+  },
+  "raw": "=== RUN   TestSeeds\n    sim_test.go:34: 5000 seeds ok: elections=74339 crashes=225274 partitions=33806 committed=1735903 snapshots=114580 snapshot-installs=17694 dropped=6750018\n--- PASS: TestSeeds (95.68s)\n=== RUN   TestSeedsStore\n    sim_test.go:34: 5000 seeds ok: elections=74255 crashes=225875 partitions=33705 committed=1737432 snapshots=115047 snapshot-installs=17586 dropped=6759229\n--- PASS: TestSeedsStore (347.76s)\nPASS\nok  \tgithub.com/XuanGiaHanNguyen/Tollgate/internal/sim\t443.448s\n"
+}

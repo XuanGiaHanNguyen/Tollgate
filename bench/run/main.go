@@ -371,6 +371,7 @@ upstreams:
 	}
 	for _, u := range c.admins {
 		if err := waitOK(u + "/readyz"); err != nil {
+			c.dumpLogs("tollgate-gw-")
 			c.stop()
 			return nil, err
 		}
@@ -403,9 +404,26 @@ func (c *cluster) stop() {
 		case <-done:
 		case <-time.After(6 * time.Second):
 			_ = p.Process.Kill()
+			<-done
 		}
 	}
 	_ = os.RemoveAll(c.dir)
+}
+
+// dumpLogs prints the tail of every process log whose name starts with
+// prefix, so a startup failure is diagnosable after the temp dir is removed.
+func (c *cluster) dumpLogs(prefix string) {
+	ents, _ := os.ReadDir(c.dir)
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		b, _ := os.ReadFile(filepath.Join(c.dir, e.Name()))
+		if len(b) > 4096 {
+			b = b[len(b)-4096:]
+		}
+		log.Printf("--- %s (tail) ---\n%s", e.Name(), b)
+	}
 }
 
 func waitOK(url string) error {

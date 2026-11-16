@@ -1,0 +1,298 @@
+{
+  "experiment": "E10",
+  "started_at": "2026-11-16T01:20:48.466218008Z",
+  "finished_at": "2026-11-16T01:20:49.464188115Z",
+  "env": {
+    "mode": "ci-runner",
+    "git_commit": "64faf2bafcf974c88ee31543f4f0a6927575f311",
+    "git_dirty": false,
+    "machine": "Virtual Machine",
+    "cpu": "Intel(R) Xeon(R) 6973P-C",
+    "cpus": 4,
+    "memory_gb": 0,
+    "os": "linux/amd64",
+    "go_version": "go1.26.0",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 1,
+    "topology": "single process (filter only)",
+    "load_avg_1m_at_start": "0.60",
+    "note": "GitHub Actions hosted runner, run 43785689025"
+  },
+  "params": {
+    "chunks": "uniform random 1-64 bytes, like SSE token deltas",
+    "corpus_bytes": 1048576,
+    "holdback_ms": "derived: holdback runes / 4 chars per token / 50 tokens per second",
+    "pattern_sets": [
+      100,
+      1000,
+      10000
+    ],
+    "patterns": "two or three random words from a 5,000-word vocabulary (12-30 runes)",
+    "planted": "~1 pattern occurrence per 2 KB, many straddling chunk boundaries",
+    "reps": 3
+  },
+  "summary": {
+    "sizes": [
+      {
+        "patterns": 100,
+        "longest_pattern_runes": 29,
+        "holdback_runes": 28,
+        "holdback_ms_at_50_tokens_per_s": 140,
+        "runs": [
+          {
+            "mb_per_sec": 28.25,
+            "chunk_p50_ns": 1143,
+            "chunk_p99_ns": 2581,
+            "planted": 756,
+            "planted_found": 756,
+            "planted_split_across_chunks": 333,
+            "split_found": 333,
+            "stream_matches": 756,
+            "whole_text_matches": 756
+          },
+          {
+            "mb_per_sec": 33.28,
+            "chunk_p50_ns": 993,
+            "chunk_p99_ns": 1980,
+            "planted": 761,
+            "planted_found": 761,
+            "planted_split_across_chunks": 353,
+            "split_found": 353,
+            "stream_matches": 761,
+            "whole_text_matches": 761
+          },
+          {
+            "mb_per_sec": 33.17,
+            "chunk_p50_ns": 987,
+            "chunk_p99_ns": 1889,
+            "planted": 737,
+            "planted_found": 737,
+            "planted_split_across_chunks": 331,
+            "split_found": 331,
+            "stream_matches": 739,
+            "whole_text_matches": 739
+          }
+        ],
+        "median_run": 2,
+        "split_recall_pct": 100
+      },
+      {
+        "patterns": 1000,
+        "longest_pattern_runes": 28,
+        "holdback_runes": 27,
+        "holdback_ms_at_50_tokens_per_s": 135,
+        "runs": [
+          {
+            "mb_per_sec": 26.48,
+            "chunk_p50_ns": 1214,
+            "chunk_p99_ns": 2465,
+            "planted": 711,
+            "planted_found": 711,
+            "planted_split_across_chunks": 295,
+            "split_found": 295,
+            "stream_matches": 714,
+            "whole_text_matches": 714
+          },
+          {
+            "mb_per_sec": 26.6,
+            "chunk_p50_ns": 1219,
+            "chunk_p99_ns": 2419,
+            "planted": 697,
+            "planted_found": 697,
+            "planted_split_across_chunks": 285,
+            "split_found": 285,
+            "stream_matches": 700,
+            "whole_text_matches": 700
+          },
+          {
+            "mb_per_sec": 25.67,
+            "chunk_p50_ns": 1234,
+            "chunk_p99_ns": 2556,
+            "planted": 722,
+            "planted_found": 722,
+            "planted_split_across_chunks": 299,
+            "split_found": 299,
+            "stream_matches": 725,
+            "whole_text_matches": 725
+          }
+        ],
+        "median_run": 0,
+        "split_recall_pct": 100
+      },
+      {
+        "patterns": 10000,
+        "longest_pattern_runes": 29,
+        "holdback_runes": 28,
+        "holdback_ms_at_50_tokens_per_s": 140,
+        "runs": [
+          {
+            "mb_per_sec": 30.02,
+            "chunk_p50_ns": 1104,
+            "chunk_p99_ns": 2568,
+            "planted": 703,
+            "planted_found": 703,
+            "planted_split_across_chunks": 298,
+            "split_found": 298,
+            "stream_matches": 742,
+            "whole_text_matches": 742
+          },
+          {
+            "mb_per_sec": 29.04,
+            "chunk_p50_ns": 1085,
+            "chunk_p99_ns": 2292,
+            "planted": 742,
+            "planted_found": 742,
+            "planted_split_across_chunks": 323,
+            "split_found": 323,
+            "stream_matches": 773,
+            "whole_text_matches": 773
+          },
+          {
+            "mb_per_sec": 30.29,
+            "chunk_p50_ns": 1076,
+            "chunk_p99_ns": 2232,
+            "planted": 739,
+            "planted_found": 739,
+            "planted_split_across_chunks": 308,
+            "split_found": 308,
+            "stream_matches": 764,
+            "whole_text_matches": 764
+          }
+        ],
+        "median_run": 0,
+        "split_recall_pct": 100
+      }
+    ]
+  },
+  "raw": [
+    {
+      "patterns": 100,
+      "longest_pattern_runes": 29,
+      "holdback_runes": 28,
+      "holdback_ms_at_50_tokens_per_s": 140,
+      "runs": [
+        {
+          "mb_per_sec": 28.25,
+          "chunk_p50_ns": 1143,
+          "chunk_p99_ns": 2581,
+          "planted": 756,
+          "planted_found": 756,
+          "planted_split_across_chunks": 333,
+          "split_found": 333,
+          "stream_matches": 756,
+          "whole_text_matches": 756
+        },
+        {
+          "mb_per_sec": 33.28,
+          "chunk_p50_ns": 993,
+          "chunk_p99_ns": 1980,
+          "planted": 761,
+          "planted_found": 761,
+          "planted_split_across_chunks": 353,
+          "split_found": 353,
+          "stream_matches": 761,
+          "whole_text_matches": 761
+        },
+        {
+          "mb_per_sec": 33.17,
+          "chunk_p50_ns": 987,
+          "chunk_p99_ns": 1889,
+          "planted": 737,
+          "planted_found": 737,
+          "planted_split_across_chunks": 331,
+          "split_found": 331,
+          "stream_matches": 739,
+          "whole_text_matches": 739
+        }
+      ],
+      "median_run": 2,
+      "split_recall_pct": 100
+    },
+    {
+      "patterns": 1000,
+      "longest_pattern_runes": 28,
+      "holdback_runes": 27,
+      "holdback_ms_at_50_tokens_per_s": 135,
+      "runs": [
+        {
+          "mb_per_sec": 26.48,
+          "chunk_p50_ns": 1214,
+          "chunk_p99_ns": 2465,
+          "planted": 711,
+          "planted_found": 711,
+          "planted_split_across_chunks": 295,
+          "split_found": 295,
+          "stream_matches": 714,
+          "whole_text_matches": 714
+        },
+        {
+          "mb_per_sec": 26.6,
+          "chunk_p50_ns": 1219,
+          "chunk_p99_ns": 2419,
+          "planted": 697,
+          "planted_found": 697,
+          "planted_split_across_chunks": 285,
+          "split_found": 285,
+          "stream_matches": 700,
+          "whole_text_matches": 700
+        },
+        {
+          "mb_per_sec": 25.67,
+          "chunk_p50_ns": 1234,
+          "chunk_p99_ns": 2556,
+          "planted": 722,
+          "planted_found": 722,
+          "planted_split_across_chunks": 299,
+          "split_found": 299,
+          "stream_matches": 725,
+          "whole_text_matches": 725
+        }
+      ],
+      "median_run": 0,
+      "split_recall_pct": 100
+    },
+    {
+      "patterns": 10000,
+      "longest_pattern_runes": 29,
+      "holdback_runes": 28,
+      "holdback_ms_at_50_tokens_per_s": 140,
+      "runs": [
+        {
+          "mb_per_sec": 30.02,
+          "chunk_p50_ns": 1104,
+          "chunk_p99_ns": 2568,
+          "planted": 703,
+          "planted_found": 703,
+          "planted_split_across_chunks": 298,
+          "split_found": 298,
+          "stream_matches": 742,
+          "whole_text_matches": 742
+        },
+        {
+          "mb_per_sec": 29.04,
+          "chunk_p50_ns": 1085,
+          "chunk_p99_ns": 2292,
+          "planted": 742,
+          "planted_found": 742,
+          "planted_split_across_chunks": 323,
+          "split_found": 323,
+          "stream_matches": 773,
+          "whole_text_matches": 773
+        },
+        {
+          "mb_per_sec": 30.29,
+          "chunk_p50_ns": 1076,
+          "chunk_p99_ns": 2232,
+          "planted": 739,
+          "planted_found": 739,
+          "planted_split_across_chunks": 308,
+          "split_found": 308,
+          "stream_matches": 764,
+          "whole_text_matches": 764
+        }
+      ],
+      "median_run": 0,
+      "split_recall_pct": 100
+    }
+  ]
+}
