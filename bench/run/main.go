@@ -36,6 +36,7 @@ var (
 	measure = flag.Duration("duration", 60*time.Second, "measured window per run (after warm-up)")
 	warmup  = flag.Duration("warmup", 10*time.Second, "warm-up before each measured window")
 	note    = flag.String("note", "", "free-text note stored with the result")
+	mode    = flag.String("mode", "laptop", "environment label: laptop, ci-runner or aws (results are reported separately per mode)")
 
 	// E1
 	levels   = flag.String("levels", "500,1000,2500,5000,7500,10000,15000,20000", "E1 arrival rates (req/s)")
@@ -138,7 +139,13 @@ func build() error {
 
 func newResult(exp string, nodes int, params map[string]any) *benchfmt.Result {
 	env := benchfmt.CaptureEnv()
-	env.Mode = "laptop"
+	env.Mode = *mode
+	if *mode == "ci-runner" {
+		env.Note = "GitHub Actions hosted runner"
+		if id := os.Getenv("GITHUB_RUN_ID"); id != "" {
+			env.Note += ", run " + id
+		}
+	}
 	env.NodeCount = nodes
 	env.Topology = "local processes on one machine; k6, gateways and backends share its CPUs"
 	params["reps"] = *reps

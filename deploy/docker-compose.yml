@@ -90,6 +90,7 @@ services:
     command: ["-addr", ":9200", "-name", "provider-a", "-ttft-median", "300ms", "-tail-prob", "0.05", "-tail-mult", "8",
               "-inject", "secret code,home address", "-inject-prob", "0.1"]
   provider-b:
+    build: {context: .., args: {BIN: mockllm}}
     image: tollgate/mockllm:dev
     command: ["-addr", ":9200", "-name", "provider-b", "-ttft-median", "350ms", "-tail-prob", "0.05", "-tail-mult", "8", "-seed", "2"]
     depends_on: [provider-a]
