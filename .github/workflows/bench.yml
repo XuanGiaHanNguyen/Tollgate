@@ -3,12 +3,17 @@ name: bench
 # Runs the experiments on clean GitHub-hosted Linux runners (one fresh VM
 # per experiment) and uploads the result files. Results are labelled
 # mode=ci-runner and reported separately from laptop numbers.
+# Manual dispatch needs the workflow on the default branch; until the
+# milestone PRs are merged, editing bench/ci-run (its first line lists the
+# experiments) on any branch starts a run.
 on:
   workflow_dispatch:
     inputs:
       experiments:
         description: "space-separated: e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 sim"
         default: "e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 sim"
+  push:
+    paths: ["bench/ci-run"]
 
 permissions:
   contents: read
@@ -19,8 +24,12 @@ jobs:
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v4
       - id: m
-        run: echo "matrix=$(echo '${{ inputs.experiments }}' | jq -Rc 'split(" ") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+        run: |
+          exps='${{ inputs.experiments }}'
+          if [ -z "$exps" ]; then exps=$(head -1 bench/ci-run); fi
+          echo "matrix=$(echo "$exps" | jq -Rc 'split(" ") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
 
   run:
     needs: plan
