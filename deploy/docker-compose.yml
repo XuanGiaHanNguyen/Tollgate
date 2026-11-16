@@ -20,6 +20,7 @@ services:
               "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
     volumes: ["ctl-1-data:/data"]
     ports: ["7201:7200"]
+    restart: unless-stopped
 
   ctl-2:
     build: {context: .., args: {BIN: tollgate-control}}
@@ -29,6 +30,7 @@ services:
               "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
     volumes: ["ctl-2-data:/data"]
     ports: ["7202:7200"]
+    restart: unless-stopped
 
   ctl-3:
     build: {context: .., args: {BIN: tollgate-control}}
@@ -38,6 +40,7 @@ services:
               "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
     volumes: ["ctl-3-data:/data"]
     ports: ["7203:7200"]
+    restart: unless-stopped
 
   rules-init:
     build: {context: .., args: {BIN: tollgatectl}}
