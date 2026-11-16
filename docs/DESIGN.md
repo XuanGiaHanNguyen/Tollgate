@@ -182,3 +182,50 @@ Golden files under each package's `testdata/` (input `.tg`, expected tokens / AS
 - **Result** (`e2-20261115T045308Z.json`, clean tree at `18b89aa`): speedup 0.99× (xs), 1.85× (s), 2.39× (m), 2.50× (l), **2.56× (xl)**; both engines 0 allocs/eval. The spec example route went from 35 to 19 instructions.
 - **Goal (≥ 3× on large rule sets) still missed: 2.56×.** What remains in the VM profile is mostly work both engines must do: string compares on fields and headers, header map lookups, prefix containment. A bigger gap would need the interpreter to be worse, not the VM better. The xs set (2 statements, 16 instructions) stays at ~1× because fixed per-call cost dominates.
 - **History kept:** `e2-…032952Z` (1.5–2.05×, strawman interpreter), `e2-…033218Z` (dirty tree) and `e2-…033800Z` (0.90–1.01×, fair baseline before VM work) remain in `bench/results/`; METRICS.md shows the newest.
+
+## M4: Distributed rate limiting — plan
+
+### Packages
+- `internal/ratelimit/bucket`: token bucket (M3) plus a **sliding-window counter**: two fixed windows; the estimate is `prev × (1 − elapsed/per) + curr`, and a request is admitted while the estimate is below the limit. Same sharded store, with an algorithm per call.
+- `internal/ratelimit/ring`: consistent hash ring. FNV-1a 64 of `"<node>#<i>"` per virtual node (default 128), passed through a splitmix64 finalizer for an even spread. Points are sorted; `Owner(key)` is a binary search. The ring is immutable and swapped through an `atomic.Pointer` on membership change. It must be deterministic across processes, so it cannot use `maphash`, which is seeded per process.
+- `internal/ratelimit/peer`: the gRPC `CheckLimits` client and server. One **batcher** goroutine per peer collects checks and flushes at 100 checks or 500 µs, whichever comes first (both tunable; `max_batch: 1` disables batching). Each caller waits on its own pooled result channel, with a short timeout.
+- `internal/ratelimit` (`Limiter`): `Allow(ctx, LimitReq) → {allowed, degraded}`. Owner = `ring.Owner("<limitID>|<key>")`. If that's this node, check the local store. Otherwise check the peer, and if the peer fails or times out, fall back to a **separate** local store with the limit divided by the node count (at least 1), counted as degraded.
+- `api/proto/tollgate/v1/ratelimit.proto`, generated with `buf` into `api/gen/`, and the generated code committed so builds need no protoc.
+
+### Wire format
+`CheckRequest{repeated Check}`, where `Check{limit_id, key, count, per_ns, algorithm}`. The owner applies the parameters it receives, so a gateway that has already reloaded rules is not blocked by a peer still on the old version. `CheckResponse{repeated bool allowed}`, in the same order.
+
+### Rule language
+`limit 10 per minute by user.id using sliding_window`, where `using` is optional and token bucket is the default. It flows through AST → compiler `LimitInfo` → `env.LimitReq.Algo`, in both engines.
+
+### Membership (static until M6)
+YAML `cluster: {self, listen, vnodes, peers: [{name, addr}], batch: {max, flush}, peer_timeout}`. With no `cluster` block the limiter is purely local (M3 behavior).
+
+### Failure behavior and rebalancing
+- An unreachable owner falls back as above. There's no failure detector yet: each call pays at most `peer_timeout` (default 20 ms), so a dead peer costs latency until M6 membership removes it. Considered a circuit breaker per peer (reusing `internal/breaker`) to skip dead peers immediately, and adopted it: an open breaker goes straight to fallback.
+- When membership changes, only keys whose owner changed move, and their buckets start fresh on the new owner. Old state ages out through `Sweep`.
+
+### Metrics
+`tollgate_ratelimit_decisions_total{result=allow|deny|degraded,node}`, `tollgate_ratelimit_peer_rpc_seconds{peer}`, `tollgate_ratelimit_batch_size{peer}`.
+
+### Experiments
+- **E3** (laptop, local processes): one key, 3 gateways, k6 sends a known rate round-robin across them. Over-admission = (allowed − ideal) / ideal, where ideal = burst + limit × duration. Runs with batching and without (`max_batch: 1`). Also reports added p99 vs a single gateway enforcing locally, and peer RPCs per request (from metrics). A **kill run** sends traffic only to gw-1/gw-2 for a key owned by gw-3, kills gw-3 mid-run, and reports degraded decisions and over-admission.
+- **E4** (pure Go): 1M keys; add a 4th node to 3 and remove one from 4; vnodes ∈ {1, 16, 64, 128, 256}. Reports % of keys moved vs the ideal 1/N and the max/mean keys per node.
+
+## M4: decisions log
+
+- **Ring hash.** FNV-1a 64 over `"<member>#<i>"` with a splitmix64 finalizer. FNV alone clusters similar short strings; the finalizer is what makes 128 vnodes spread within ±8%. `maphash` was rejected because it is seeded per process, and every gateway must agree on owners.
+- **Wire carries limit parameters.** `Check` includes count, period and algorithm, so the owner enforces what the caller compiled; gateways mid-reload don't disagree about a key's limit.
+- **Breaker per peer.** A dead owner first costs one `peer_timeout` (20 ms) per decision; after 5 failures the peer's breaker opens and decisions fall back immediately (tested: < 10 ms with the breaker open). It half-opens after 1 s to notice recovery.
+- **Fallback share = limit / N** with N = current ring size, at least 1. During an outage the cluster admits less than the limit (two survivors × 1/3), never more, except for each fallback bucket's initial burst.
+- **E3 offered rate.** At 300 req/s against 100/s every batch held exactly one check (remote checks ~10 ms apart vs a 500 µs flush window), so "with vs without batching" measured nothing. E3 uses 6,000 req/s against 1,000/s (same 6× overload ratio as planned; the absolute rate was raised before any recorded run).
+- **Kill timing.** The runner first measured the kill time from k6 launch, which put the kill ~0.5 s before k6's phase boundary and showed a false 17% over-admission "before" the kill in a smoke run. Phase timing is now anchored on the first request reaching a gateway.
+- **Toolchain.** Homebrew installed Go 1.27.4 as a dependency during this milestone and it now precedes `/usr/local/go` (1.26.1) on PATH. E3 and E4 binaries were built with 1.27.4 (recorded in their result files); E1, E2 and E7 used 1.26. CI pins 1.26 via `go.mod`.
+
+## M4: measured results (laptop; full tables in METRICS.md)
+
+- **E3** (6,000 req/s offered against 1,000/s, 60 s × 3 runs, median by over-admission): 1 gateway −0.00% (exact); **3 gateways batched +0.07%** (runs: +0.03, +0.42, +0.07); **3 gateways unbatched +0.31%** (+0.21, +0.46, +0.31). Goal "under 5%" met. Over-admission comes from degraded decisions, when a peer check exceeds 20 ms under CPU saturation and the fallback bucket's initial burst admits a few extra. Batching halves peer RPCs per request (0.666 → 0.346, mean batch 1.93) and, in the full runs, also had fewer degraded decisions (44 vs 227 in the medians), because fewer RPCs means less CPU contention. A shorter 20 s probe run showed the opposite, so the comparison of degraded counts is noisy at this scale.
+- **Added p99** is within laptop noise: −0.92 ms (batched) and +2.50 ms (unbatched) vs the single gateway in the median runs. The isolated latency probe (no k6, no gateways) is the cleaner number: a loopback peer check costs p50 0.13 ms / p99 0.25 ms unbatched and p50 0.64 ms / p99 0.86 ms batched at 2,000 checks/s, so batching trades ~0.5 ms of latency for fewer RPCs. That trade pays off when RPCs are expensive (across machines), not on loopback.
+- **Owner killed mid-run** (acceptance): before the kill +0.01–0.40%; after, admitted 27,306 of an ideal 40,000 (−31.7%, identical in all 3 runs), i.e. two survivors × limit/3 plus their fallback bursts. All ~240k post-kill decisions were counted as degraded. Limits stay enforced in the safe direction.
+- **E4** (1M keys): no key ever moved anywhere except to or from the changed node, at any vnode count. Keys moved when adding a 4th node: 12.7% (1 vnode), 31.0% (16), 18.0% (64), **23.5% (128)**, 23.8% (256), against an ideal 25%. Max/mean keys per node on 3 nodes: 1.54, 1.18, 1.09, **1.08**, 1.04. Removing the node is exactly symmetric by construction (the 4→3 ring is the 3-node ring), so its numbers equal the add case.
+- **Hot-reload fail-open bug (found by CI in M4, fixed in M3 and M4).** The watcher could read the rules file between an editor's truncate and write, get an empty file, and load it as a valid zero-route program, dropping all policy until the next poll. Reloads now require identical content on two consecutive polls (one extra interval of delay) and refuse an empty file (`ErrEmptyRules`).

@@ -212,8 +212,9 @@ func (g *gen) stmts(depth, n int, indent string) {
 			}
 			fallthrough
 		case 3:
-			fmt.Fprintf(&g.b, "%slimit %d per %s by %s\n", indent, g.r.IntN(100)+1,
-				g.pick([]string{"second", "minute", "hour", "day"}), g.strExpr(1))
+			fmt.Fprintf(&g.b, "%slimit %d per %s by %s%s\n", indent, g.r.IntN(100)+1,
+				g.pick([]string{"second", "minute", "hour", "day"}), g.strExpr(1),
+				g.pick([]string{"", "", " using sliding_window", " using token_bucket"}))
 		case 4:
 			if g.r.IntN(3) == 0 {
 				fmt.Fprintf(&g.b, "%sdeny %d\n", indent, 400+g.r.IntN(200))

@@ -151,7 +151,11 @@ type Limit struct {
 	Count int64
 	Unit  Unit
 	Key   Expr
+	Algo  uint8 // 0 token bucket (default), 1 sliding window ("using sliding_window")
 }
+
+// AlgoNames maps Limit.Algo to its source spelling.
+var AlgoNames = [...]string{"token_bucket", "sliding_window"}
 
 // Deny ends evaluation with an HTTP status.
 type Deny struct {
@@ -301,7 +305,11 @@ func formatStmts(b *strings.Builder, ss []Stmt, depth int) {
 			formatStmts(b, s.Body, depth+1)
 			fmt.Fprintf(b, "%s)\n", ind)
 		case *Limit:
-			fmt.Fprintf(b, "%s(limit#%d %d per %s by %s)\n", ind, s.ID, s.Count, s.Unit, FormatExpr(s.Key))
+			using := ""
+			if s.Algo != 0 {
+				using = " using " + AlgoNames[s.Algo]
+			}
+			fmt.Fprintf(b, "%s(limit#%d %d per %s by %s%s)\n", ind, s.ID, s.Count, s.Unit, FormatExpr(s.Key), using)
 		case *Deny:
 			fmt.Fprintf(b, "%s(deny %d)\n", ind, s.Status)
 		case *SetHeader:

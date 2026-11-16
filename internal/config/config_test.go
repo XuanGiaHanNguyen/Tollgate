@@ -124,3 +124,36 @@ auth:
 		}
 	}
 }
+
+func TestCluster(t *testing.T) {
+	c, err := Parse([]byte(valid + `
+cluster:
+  self: gw-1
+  listen: ":7001"
+  members:
+    - {name: gw-1, addr: "gw-1:7001"}
+    - {name: gw-2, addr: "gw-2:7001"}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := c.Cluster
+	if cl.VNodes != 128 || cl.Batch.Max != 100 || cl.Batch.Flush != 500*time.Microsecond || cl.PeerTimeout != 20*time.Millisecond {
+		t.Errorf("cluster defaults: %+v", cl)
+	}
+	_, err = Parse([]byte(valid + `
+cluster:
+  self: gw-9
+  batch: {max: 5000}
+  members:
+    - {name: gw-1, addr: "a"}
+    - {name: gw-1, addr: "b"}
+    - {name: gw-2}
+`))
+	for _, w := range []string{"cluster.listen is required", `duplicate member "gw-1"`, "name and addr are required",
+		`cluster.self "gw-9" is not in cluster.members`, "cluster.batch.max must be in [1,1000]"} {
+		if err == nil || !strings.Contains(err.Error(), w) {
+			t.Errorf("error %v missing %q", err, w)
+		}
+	}
+}

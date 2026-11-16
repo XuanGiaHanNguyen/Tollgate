@@ -10,3 +10,7 @@
   )
   (deny 429)
 )
+(route "/algo"
+  (limit#0 5 per second by client.ip using sliding_window)
+  (limit#1 6 per second by client.ip)
+)

@@ -75,6 +75,10 @@ func main() {
 				writeE1(&b, r)
 			case "E2":
 				writeE2(&b, r)
+			case "E3":
+				writeE3(&b, r)
+			case "E4":
+				writeE4(&b, r)
 			case "E7":
 				writeE7(&b, r)
 			default:
@@ -338,4 +342,123 @@ func writeE2(b *strings.Builder, r *benchfmt.Result) {
 			z.Name, z.Stmts, z.Instrs, z.VM.Ns, z.VM.Allocs, z.Interp.Ns, z.Interp.Allocs, z.Speedup)
 	}
 	b.WriteString("\n")
+}
+
+// ---- E3 ----
+
+type e3Phase struct {
+	Requests      float64               `json:"requests"`
+	Allowed       float64               `json:"allowed"`
+	Limited       float64               `json:"limited"`
+	Other         float64               `json:"other_status"`
+	Seconds       float64               `json:"seconds"`
+	Ideal         float64               `json:"ideal_allowed"`
+	OverAdmission float64               `json:"over_admission_pct"`
+	Latency       benchfmt.LatencyStats `json:"latency"`
+}
+
+type e3Summary struct {
+	Modes []struct {
+		Name     string `json:"name"`
+		Gateways int    `json:"gateways"`
+		Runs     []struct {
+			Phases     map[string]e3Phase `json:"phases"`
+			RPCsPerReq float64            `json:"peer_rpcs_per_request"`
+			MeanBatch  float64            `json:"mean_batch_size"`
+			Degraded   float64            `json:"degraded_decisions"`
+			Dropped    float64            `json:"dropped_iterations"`
+		} `json:"runs"`
+		Median int `json:"median_run"`
+	} `json:"modes"`
+}
+
+var e3Labels = map[string]string{
+	"single_gateway": "1 gateway (local limit, baseline)", "cluster_batched": "3 gateways, batched",
+	"cluster_unbatched": "3 gateways, unbatched", "cluster_kill_owner": "3 gateways, owner killed",
+}
+
+func writeE3(b *strings.Builder, r *benchfmt.Result) {
+	var s e3Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: one API key, %v req/s offered round-robin across the gateways, limit %v. Ideal admitted = %v. Batching: %v; peer timeout %v. Kill run: %v.\n\n",
+		r.Params["offered_rate"], r.Params["limit"], r.Params["ideal"], r.Params["batching"], r.Params["peer_timeout"], r.Params["kill_run"])
+
+	var baseP99 float64
+	for _, m := range s.Modes {
+		if m.Name == "single_gateway" {
+			baseP99 = m.Runs[m.Median].Phases["measure"].Latency.P99
+		}
+	}
+	b.WriteString("**Accuracy and cost** (median run by over-admission)\n\n| Setup | Phase | Admitted | Ideal | Over-admission | p99 (ms) | Added p99 vs 1 gateway (ms) | Peer RPCs / request | Mean batch | Degraded decisions |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, m := range s.Modes {
+		run := m.Runs[m.Median]
+		phases := []string{"measure"}
+		if _, ok := run.Phases["before"]; ok {
+			phases = []string{"before", "after"}
+		}
+		for _, ph := range phases {
+			p := run.Phases[ph]
+			name := ph
+			if ph == "measure" {
+				name = "whole window"
+			} else if ph == "after" {
+				name = "after owner killed"
+			} else {
+				name = "before kill"
+			}
+			added := "—"
+			if m.Name != "single_gateway" && ph != "after" {
+				added = fmt.Sprintf("%+.2f", p.Latency.P99-baseP99)
+			}
+			fmt.Fprintf(b, "| %s | %s | %.0f | %.0f | %+.2f%% | %.2f | %s | %.3f | %.2f | %.0f |\n",
+				e3Labels[m.Name], name, p.Allowed, p.Ideal, p.OverAdmission, p.Latency.P99, added, run.RPCsPerReq, run.MeanBatch, run.Degraded)
+		}
+	}
+	b.WriteString("\nAll runs (over-admission %, whole window or after-kill phase):\n\n")
+	for _, m := range s.Modes {
+		var vals []string
+		for _, run := range m.Runs {
+			ph := "measure"
+			if _, ok := run.Phases["after"]; ok {
+				ph = "after"
+			}
+			vals = append(vals, fmt.Sprintf("%+.2f%%", run.Phases[ph].OverAdmission))
+		}
+		fmt.Fprintf(b, "- %s: %s\n", e3Labels[m.Name], strings.Join(vals, ", "))
+	}
+	b.WriteString("\nDegraded decisions and peer RPCs are counted over the measured window on the gateways still running at the end. Negative over-admission means fewer requests were admitted than the limit allows (safe direction); after the owner dies, each surviving gateway enforces limit/3 locally.\n\n")
+}
+
+// ---- E4 ----
+
+type e4Summary struct {
+	Rows []struct {
+		VNodes        int                `json:"vnodes"`
+		AddMovedPct   float64            `json:"add_moved_pct"`
+		AddWrongMoves int                `json:"add_wrong_moves"`
+		RemMovedPct   float64            `json:"remove_moved_pct"`
+		RemWrongMoves int                `json:"remove_wrong_moves"`
+		IdealPct      float64            `json:"ideal_pct"`
+		S3            map[string]float64 `json:"spread_3_nodes"`
+		S4            map[string]float64 `json:"spread_4_nodes"`
+	} `json:"rows"`
+}
+
+func writeE4(b *strings.Builder, r *benchfmt.Result) {
+	var s e4Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: %v keys (`%v`), hash %v; %v. Deterministic, so one run is exact.\n\n", r.Params["keys"], r.Params["key_format"], r.Params["hash"], r.Params["scenarios"])
+	b.WriteString("| vnodes / node | Keys moved, 3→4 nodes | Keys moved, 4→3 nodes | Ideal | Moves not to/from the changed node | Max / mean keys per node (3 nodes) | Min / mean (3 nodes) | Std dev (3 nodes) | Max / mean (4 nodes) |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, row := range s.Rows {
+		fmt.Fprintf(b, "| %d | %.2f%% | %.2f%% | %.0f%% | %d | %.3f | %.3f | %.1f%% | %.3f |\n",
+			row.VNodes, row.AddMovedPct, row.RemMovedPct, row.IdealPct, row.AddWrongMoves+row.RemWrongMoves,
+			row.S3["max_over_mean"], row.S3["min_over_mean"], row.S3["stddev_pct_of_mean"], row.S4["max_over_mean"])
+	}
+	b.WriteString("\nThe share of keys that moves equals the share the changed node owns, so it tracks the ideal 1/N only as closely as the ring spreads load; more virtual nodes tighten both.\n\n")
 }

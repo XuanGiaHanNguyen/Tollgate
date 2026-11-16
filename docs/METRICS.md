@@ -106,6 +106,65 @@ Engines agree (differential gate passed): **true**
 | l | 200 | 1004 | 2621.0 | 0 | 6553.0 | 0 | 2.50× |
 | xl | 1000 | 5004 | 12621.0 | 0 | 32315.0 | 0 | 2.56× |
 
+### E3: How accurate is distributed limiting?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-15 22:02 → 22:17 (UTC) |
+| Commit | `50fe4196b96c` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 3 gateway node(s) max |
+| Load average at start | 2.67 |
+| Power | battery |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+
+Method: one API key, 6000 req/s offered round-robin across the gateways, limit 1000 per second by user.id (token bucket). Ideal admitted = limit × measured seconds (the warm-up drains the initial burst). Batching: batched: max 100 / flush 500us; unbatched: max 1; peer timeout 20ms. Kill run: traffic via gw-1, gw-2 only; gw-3 (the owner) SIGKILLed 20s into the measured window; fallback allows limit/3 per gateway.
+
+**Accuracy and cost** (median run by over-admission)
+
+| Setup | Phase | Admitted | Ideal | Over-admission | p99 (ms) | Added p99 vs 1 gateway (ms) | Peer RPCs / request | Mean batch | Degraded decisions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 gateway (local limit, baseline) | whole window | 59998 | 60000 | -0.00% | 2.45 | — | 0.000 | 0.00 | 0 |
+| 3 gateways, batched | whole window | 60039 | 60000 | +0.07% | 1.53 | -0.92 | 0.346 | 1.93 | 44 |
+| 3 gateways, unbatched | whole window | 60188 | 60000 | +0.31% | 4.96 | +2.50 | 0.666 | 1.00 | 227 |
+| 3 gateways, owner killed | before kill | 20079 | 20000 | +0.40% | 4.95 | +2.50 | 0.160 | 2.09 | 239688 |
+| 3 gateways, owner killed | after owner killed | 27306 | 40000 | -31.73% | 3.53 | — | 0.160 | 2.09 | 239688 |
+
+All runs (over-admission %, whole window or after-kill phase):
+
+- 1 gateway (local limit, baseline): -0.00%, -0.00%, -0.00%
+- 3 gateways, batched: +0.03%, +0.42%, +0.07%
+- 3 gateways, unbatched: +0.21%, +0.46%, +0.31%
+- 3 gateways, owner killed: -31.73%, -31.73%, -31.74%
+
+Degraded decisions and peer RPCs are counted over the measured window on the gateways still running at the end. Negative over-admission means fewer requests were admitted than the limit allows (safe direction); after the owner dies, each surviving gateway enforces limit/3 locally.
+
+### E4: Does consistent hashing minimize movement?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-15 21:56 → 21:56 (UTC) |
+| Commit | `644393d279dc` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | single process (pure computation, deterministic); 4 gateway node(s) max |
+| Load average at start | 3.00 |
+| Power | battery |
+| Repetitions | 1 (median reported) |
+
+Method: 1e+06 keys (`<limitID>|user-<n>`), hash FNV-1a 64 + splitmix64 finalizer; add gw-4 to {gw-1..gw-3}; remove gw-4 from {gw-1..gw-4}. Deterministic, so one run is exact.
+
+| vnodes / node | Keys moved, 3→4 nodes | Keys moved, 4→3 nodes | Ideal | Moves not to/from the changed node | Max / mean keys per node (3 nodes) | Min / mean (3 nodes) | Std dev (3 nodes) | Max / mean (4 nodes) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 12.69% | 12.69% | 25% | 0 | 1.536 | 0.672 | 38.2% | 2.048 |
+| 16 | 30.95% | 30.95% | 25% | 0 | 1.178 | 0.742 | 18.7% | 1.238 |
+| 64 | 18.03% | 18.03% | 25% | 0 | 1.093 | 0.856 | 10.3% | 1.160 |
+| 128 | 23.53% | 23.53% | 25% | 0 | 1.083 | 0.954 | 5.9% | 1.125 |
+| 256 | 23.81% | 23.81% | 25% | 0 | 1.042 | 0.966 | 3.2% | 1.044 |
+
+The share of keys that moves equals the share the changed node owns, so it tracks the ideal 1/N only as closely as the ring spreads load; more virtual nodes tighten both.
+
 ### E7: Does the breaker protect latency?
 
 | Environment | |
@@ -148,8 +207,6 @@ _No results yet._
 
 ## Not yet measured
 
-- E3: How accurate is distributed limiting?
-- E4: Does consistent hashing minimize movement?
 - E5: How does Raft behave?
 - E6: How fast does config reach gateways?
 - E8: Do cost budgets hold?

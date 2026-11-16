@@ -11,7 +11,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 | M1 Single-node gateway | done (compose run not yet verified) |
 | M2 Metrics and first numbers | done: see [`docs/METRICS.md`](docs/METRICS.md) |
 | M3 Rule language | done: bytecode VM 2.56× faster than a fair interpreter on large rule sets (goal was 3×; see METRICS.md) |
-| M4 Distributed rate limiting | not started |
+| M4 Distributed rate limiting | done: 3 gateways over-admit +0.07% vs the limit; limits hold when a node dies (see METRICS.md) |
 | M5 AI gateway | not started |
 | M6 Raft control plane | not started |
 | M7 Safe rollout | not started |
@@ -26,7 +26,7 @@ make chaos-kill-backend-local  # kill a backend under load (no Docker needed)
 
 make bench-e1 && make report   # load test (k6), regenerate docs/METRICS.md
 
-make up                        # docker-compose: 1 gateway + 3 backends, Prometheus :9091, Grafana :3000
+make up                        # docker-compose: 3 gateways + 3 backends, Prometheus :9095, Grafana :3000
 curl localhost:8080/hello      # proxied; X-Backend header shows which backend
 curl localhost:9090/admin/upstreams
 make chaos-kill-backend        # same kill check against compose

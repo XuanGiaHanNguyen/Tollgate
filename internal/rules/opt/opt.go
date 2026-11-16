@@ -68,7 +68,7 @@ func (o *optimizer) block(ss []ast.Stmt) ([]ast.Stmt, bool) {
 			}
 			out = append(out, &ast.When{Pos: s.Pos, Cond: cond, Body: body})
 		case *ast.Limit:
-			out = append(out, &ast.Limit{Pos: s.Pos, ID: s.ID, Count: s.Count, Unit: s.Unit, Key: o.expr(s.Key)})
+			out = append(out, &ast.Limit{Pos: s.Pos, ID: s.ID, Count: s.Count, Unit: s.Unit, Key: o.expr(s.Key), Algo: s.Algo})
 		case *ast.SetHeader:
 			out = append(out, &ast.SetHeader{Pos: s.Pos, Name: s.Name, Value: o.expr(s.Value)})
 		case *ast.Deny:

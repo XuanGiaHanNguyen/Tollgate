@@ -10,7 +10,7 @@ import (
 
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
-	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit/bucket"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules/env"
 )
@@ -22,12 +22,12 @@ type policy struct {
 	rules   atomic.Pointer[rules.RuleSet]
 	version atomic.Uint64
 	engine  rules.Engine
-	limiter *bucket.Store
+	limiter *ratelimit.Limiter
 	keys    map[string]config.APIKey // read-only after construction
 }
 
-func newPolicy(cfg *config.Config) *policy {
-	p := &policy{limiter: bucket.New(nil), keys: map[string]config.APIKey{}}
+func newPolicy(cfg *config.Config, lim *ratelimit.Limiter) *policy {
+	p := &policy{limiter: lim, keys: map[string]config.APIKey{}}
 	if cfg.Rules.Engine == "interp" {
 		p.engine = rules.Interp
 	}
@@ -98,10 +98,10 @@ func (g *Gateway) applyPolicy(r *http.Request) int {
 		return d.Deny
 	}
 	// Every applicable limit must admit the request. Earlier buckets keep
-	// the token they gave even if a later one refuses.
+	// the token they gave even if a later one refuses. The limiter checks
+	// locally or on the key's owner node.
 	for i := 0; i < d.NLimits; i++ {
-		l := d.Limits[i]
-		if !g.policy.limiter.Allow(bucket.Key{LimitID: l.ID, Value: l.Key}, l.Count, l.Per) {
+		if ok, _ := g.policy.limiter.Allow(r.Context(), d.Limits[i]); !ok {
 			g.countPolicy(metrics.PolicyLimited)
 			return http.StatusTooManyRequests
 		}

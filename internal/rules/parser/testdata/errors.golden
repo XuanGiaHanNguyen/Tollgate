@@ -7,6 +7,8 @@
 (route "/c"
   (deny 403)
 )
+(route "/bad-algo"
+)
 1:5: error: parser: expected identifier after 'let', found '='
 3:9: error: parser: expected request count after 'limit', found 'per'
 4:8: error: parser: expected HTTP status after 'deny', found string "403"
@@ -16,3 +18,4 @@
 9:3: error: parser: expected an expression, found 'deny'
 13:1: error: parser: expected a statement, found identifier "banana"
 14:1: error: parser: missing '}' for block opened at 11:1
+16:41: error: parser: unknown limit algorithm "leaky_bucket" (want token_bucket or sliding_window)

@@ -297,7 +297,7 @@ func Run(ch *compiler.Chunk, r *env.Request, budget int, d *env.Decision) {
 		case compiler.OpLimit:
 			sp--
 			l := &ch.Limits[in.A]
-			if !d.AddLimit(env.LimitReq{ID: l.ID, Count: l.Count, Per: l.Unit.Duration(), Key: stack[sp].S}) {
+			if !d.AddLimit(env.LimitReq{ID: l.ID, Count: l.Count, Per: l.Unit.Duration(), Key: stack[sp].S, Algo: l.Algo}) {
 				d.Err, d.Steps = env.ErrTooMany, steps
 				return
 			}

@@ -47,7 +47,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e7")
+		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e3|e4|e7")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -71,7 +71,7 @@ func main() {
 			dir = filepath.Join(os.TempDir(), "tollgate-quick-results")
 		}
 	}
-	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" { // E2 is pure go test
+	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" && exp != "e4" { // pure Go, no binaries
 		if err := build(); err != nil {
 			log.Fatalf("build: %v", err)
 		}
@@ -84,6 +84,10 @@ func main() {
 		res, err = runE1()
 	case "e2":
 		res, err = runE2()
+	case "e3":
+		res, err = runE3()
+	case "e4":
+		res, err = runE4()
 	case "e7":
 		res, err = runE7()
 	default:
@@ -136,6 +140,7 @@ type cluster struct {
 	backends []string // base URLs
 	gateways []string // proxy base URLs
 	admins   []string // gateway admin base URLs
+	gwProcs  []*exec.Cmd
 }
 
 type clusterSpec struct {
@@ -144,6 +149,11 @@ type clusterSpec struct {
 	latency       time.Duration
 	jitter        time.Duration
 	upstreamExtra string // YAML appended to the upstream (breaker, passive, health)
+	rules         string // rule file contents; "" = no policy
+	gatewayExtra  string // YAML appended to every gateway config (auth, ...)
+	cluster       bool   // gateways share limits over gRPC
+	batchMax      int
+	batchFlush    time.Duration
 }
 
 func startCluster(spec clusterSpec) (*cluster, error) {
@@ -166,6 +176,21 @@ func startCluster(spec clusterSpec) (*cluster, error) {
 	for i := 1; i <= spec.gateways; i++ {
 		listen := fmt.Sprintf("127.0.0.1:%d", 18080+i)
 		admin := fmt.Sprintf("127.0.0.1:%d", 19090+i)
+		extra := spec.gatewayExtra
+		if spec.rules != "" {
+			if err := os.WriteFile(filepath.Join(dir, "rules.tg"), []byte(spec.rules), 0o644); err != nil {
+				c.stop()
+				return nil, err
+			}
+			extra += "rules: {file: rules.tg}\n"
+		}
+		if spec.cluster {
+			extra += fmt.Sprintf("cluster:\n  self: gw-%d\n  listen: \"127.0.0.1:%d\"\n  vnodes: 128\n  peer_timeout: 20ms\n  batch: {max: %d, flush: %s}\n  members:\n",
+				i, 17070+i, spec.batchMax, spec.batchFlush)
+			for j := 1; j <= spec.gateways; j++ {
+				extra += fmt.Sprintf("    - {name: gw-%d, addr: \"127.0.0.1:%d\"}\n", j, 17070+j)
+			}
+		}
 		cfg := fmt.Sprintf(`listen: %q
 admin_listen: %q
 shutdown_timeout: 5s
@@ -180,7 +205,7 @@ upstreams:
     upstream: api
     timeouts: {connect: 1s, header: 5s, total: 10s}
     retry: {attempts: 2, base_backoff: 5ms, max_backoff: 50ms}
-`, listen, admin, targets.String(), spec.upstreamExtra)
+%s`, listen, admin, targets.String(), spec.upstreamExtra, extra)
 		path := filepath.Join(dir, fmt.Sprintf("gw-%d.yaml", i))
 		if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
 			c.stop()
@@ -192,6 +217,7 @@ upstreams:
 			c.stop()
 			return nil, err
 		}
+		c.gwProcs = append(c.gwProcs, c.procs[len(c.procs)-1])
 	}
 	for _, u := range c.backends {
 		if err := waitOK(u + "/healthz"); err != nil {
