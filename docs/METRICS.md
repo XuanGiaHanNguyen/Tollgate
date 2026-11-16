@@ -654,6 +654,36 @@ Breaker config (on): `breaker: {window: 5s, min_requests: 20, error_rate: 0.3, c
 | Recovery → breaker closed | 1099 ms | 1030 ms, 1039 ms, 1099 ms |
 | Times opened while failing | 15 | |
 
+### E8: Do cost budgets hold?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 02:31 → 02:40 (UTC) |
+| Commit | `644dd8942b9d` |
+| Machine | Virtual Machine, AMD EPYC 9V74 80-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 3 gateway node(s) max |
+| Load average at start | 0.64 |
+| Power | — |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43792683062 |
+
+Method: one user, $100/day budget; 400 requests at 8 req/s; mix: 80% small (50-word prompt, max_tokens 100), 20% large (3000-word prompt, max_tokens 2000); seeded per rep, same across modes. Provider: 1 x mockllm, TTFT 50ms, 1000 tok/s, output uniform 0.2-1.0 x max_tokens; prompt tokens counted by words. Pricing $1/1K input, $3/1K output; true spend from the provider's per-user billing. Request-count limit: 66 per day = budget / expected cost per request ($1.508). Reservation TTL 5s; gw-1 SIGKILLed after 10% of requests were sent, while the budget still had room and large streams were in flight. Leak check: active holds on gw-3 after every reservation deadline has passed. a budget-accounting run, not a throughput run: 400 requests at 8 req/s.
+
+| Method | Accepted | Rejected (429) | Failed | True spend | Overspend vs budget | Estimate error (mean) | Holds expired | **Leaked holds** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Request-count limit | 66 | 334 | 0 | $110.53 | +10.53% | — | 0 | 0 |
+| Cost budget (reserve-and-settle) | 86 | 314 | 0 | $99.76 | -0.24% | +91% | 0 | 0 |
+| Cost budget, streaming gateway killed | 102 | 117 | 181 | $104.75 | +4.75% | +94% | 1 | 0 |
+
+All runs (overspend %; leaked holds; degraded limit decisions):
+
+- Request-count limit: +14.54% / 0 leaked / 0 degraded; +10.53% / 0 leaked / 0 degraded; -7.58% / 0 leaked / 0 degraded
+- Cost budget (reserve-and-settle): -0.24% / 0 leaked / 0 degraded; -0.07% / 0 leaked / 0 degraded; -0.31% / 0 leaked / 0 degraded
+- Cost budget, streaming gateway killed: +4.75% / 0 leaked / 0 degraded; +4.82% / 0 leaked / 0 degraded; +4.03% / 0 leaked / 0 degraded
+
+Estimate error is (estimate − actual) / actual: positive means the hold was larger than the real cost (estimates reserve the full max_tokens). Failed requests in the kill run are the ones sent to the dead gateway.
+
 ### E9: Does hedging cut tail latency?
 
 | Environment | |

@@ -1,0 +1,287 @@
+{
+  "experiment": "E8",
+  "started_at": "2026-11-16T02:31:51.868083167Z",
+  "finished_at": "2026-11-16T02:40:33.564589649Z",
+  "env": {
+    "mode": "ci-runner",
+    "git_commit": "644dd8942b9d1dd93e268aaccd13fe886eeaf4f7",
+    "git_dirty": false,
+    "machine": "Virtual Machine",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "cpus": 4,
+    "memory_gb": 0,
+    "os": "linux/amd64",
+    "go_version": "go1.26.0",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 3,
+    "topology": "local processes on one machine; k6, gateways and backends share its CPUs",
+    "load_avg_1m_at_start": "0.64",
+    "note": "GitHub Actions hosted runner, run 43792683062"
+  },
+  "params": {
+    "budget_usd": 100,
+    "count_limit": "66 per day = budget / expected cost per request ($1.508)",
+    "duration_note": "a budget-accounting run, not a throughput run: 400 requests at 8 req/s",
+    "kill": "gw-1 SIGKILLed after 10% of requests were sent, while the budget still had room and large streams were in flight",
+    "leak_check": "active holds on gw-3 after every reservation deadline has passed",
+    "measure_seconds": 60,
+    "mix": "80% small (50-word prompt, max_tokens 100), 20% large (3000-word prompt, max_tokens 2000); seeded per rep, same across modes",
+    "pricing": "$1/1K input, $3/1K output; true spend from the provider's per-user billing",
+    "provider": "1 x mockllm, TTFT 50ms, 1000 tok/s, output uniform 0.2-1.0 x max_tokens; prompt tokens counted by words",
+    "rate": 8,
+    "reps": 3,
+    "requests": 400,
+    "reservation_ttl": "5s",
+    "user_key_owner": "gw-3 (traffic via gw-1, gw-2)",
+    "warmup_seconds": 10
+  },
+  "summary": {
+    "modes": [
+      {
+        "name": "request_count_limit",
+        "rules": "route \"/v1/chat/*\" {\n  require auth\n  limit 66 per day by user.id\n  set_header \"X-User-Id\" user.id\n}\n",
+        "runs": [
+          {
+            "accepted": 66,
+            "rejected_429": 334,
+            "failed": 0,
+            "true_spend_usd": 114.54,
+            "overspend_pct": 14.54,
+            "estimate_error_mean": 0,
+            "reservations_expired": 0,
+            "leaked_holds_after_ttl": 0,
+            "provider_cancelled_streams": 0,
+            "degraded_limit_decisions": 0
+          },
+          {
+            "accepted": 66,
+            "rejected_429": 334,
+            "failed": 0,
+            "true_spend_usd": 110.532,
+            "overspend_pct": 10.532,
+            "estimate_error_mean": 0,
+            "reservations_expired": 0,
+            "leaked_holds_after_ttl": 0,
+            "provider_cancelled_streams": 0,
+            "degraded_limit_decisions": 0
+          },
+          {
+            "accepted": 66,
+            "rejected_429": 334,
+            "failed": 0,
+            "true_spend_usd": 92.424,
+            "overspend_pct": -7.576,
+            "estimate_error_mean": 0,
+            "reservations_expired": 0,
+            "leaked_holds_after_ttl": 0,
+            "provider_cancelled_streams": 0,
+            "degraded_limit_decisions": 0
+          }
+        ],
+        "median_run": 1
+      },
+      {
+        "name": "cost_budget",
+        "rules": "route \"/v1/chat/*\" {\n  require auth\n  budget 100.00 usd per day by user.id\n  set_header \"X-User-Id\" user.id\n}\n",
+        "runs": [
+          {
+            "accepted": 86,
+            "rejected_429": 314,
+            "failed": 0,
+            "true_spend_usd": 99.762,
+            "overspend_pct": -0.238,
+            "estimate_error_mean": 0.9071,
+            "reservations_expired": 0,
+            "leaked_holds_after_ttl": 0,
+            "provider_cancelled_streams": 0,
+            "degraded_limit_decisions": 0
+          },
+          {
+            "accepted": 98,
+            "rejected_429": 302,
+            "failed": 0,
+            "true_spend_usd": 99.933,
+            "overspend_pct": -0.067,
+            "estimate_error_mean": 0.8796,
+            "reservations_expired": 0,
+            "leaked_holds_after_ttl": 0,
+            "provider_cancelled_streams": 0,
+            "degraded_limit_decisions": 0
+          },
+          {
+            "accepted": 99,
+            "rejected_429": 301,
+            "failed": 0,
+            "true_spend_usd": 99.687,
+            "overspend_pct": -0.313,
+            "estimate_error_mean": 0.7702,
+            "reservations_expired": 0,
+            "leaked_holds_after_ttl": 0,
+            "provider_cancelled_streams": 0,
+            "degraded_limit_decisions": 0
+          }
+        ],
+        "median_run": 0
+      },
+      {
+        "name": "cost_budget_kill_gateway",
+        "rules": "route \"/v1/chat/*\" {\n  require auth\n  budget 100.00 usd per day by user.id\n  set_header \"X-User-Id\" user.id\n}\n",
+        "runs": [
+          {
+            "accepted": 102,
+            "rejected_429": 117,
+            "failed": 181,
+            "true_spend_usd": 104.746,
+            "overspend_pct": 4.746,
+            "estimate_error_mean": 0.94,
+            "reservations_expired": 1,
+            "leaked_holds_after_ttl": 0,
+            "killed_at_request": 40,
+            "provider_cancelled_streams": 1,
+            "degraded_limit_decisions": 0
+          },
+          {
+            "accepted": 103,
+            "rejected_429": 116,
+            "failed": 181,
+            "true_spend_usd": 104.821,
+            "overspend_pct": 4.821,
+            "estimate_error_mean": 0.9191,
+            "reservations_expired": 1,
+            "leaked_holds_after_ttl": 0,
+            "killed_at_request": 40,
+            "provider_cancelled_streams": 1,
+            "degraded_limit_decisions": 0
+          },
+          {
+            "accepted": 96,
+            "rejected_429": 123,
+            "failed": 181,
+            "true_spend_usd": 104.03,
+            "overspend_pct": 4.03,
+            "estimate_error_mean": 0.7624,
+            "reservations_expired": 1,
+            "leaked_holds_after_ttl": 0,
+            "killed_at_request": 40,
+            "provider_cancelled_streams": 1,
+            "degraded_limit_decisions": 0
+          }
+        ],
+        "median_run": 0
+      }
+    ]
+  },
+  "raw": {
+    "cost_budget/0": {
+      "accepted": 86,
+      "rejected_429": 314,
+      "failed": 0,
+      "true_spend_usd": 99.762,
+      "overspend_pct": -0.238,
+      "estimate_error_mean": 0.9071,
+      "reservations_expired": 0,
+      "leaked_holds_after_ttl": 0,
+      "provider_cancelled_streams": 0,
+      "degraded_limit_decisions": 0
+    },
+    "cost_budget/1": {
+      "accepted": 98,
+      "rejected_429": 302,
+      "failed": 0,
+      "true_spend_usd": 99.933,
+      "overspend_pct": -0.067,
+      "estimate_error_mean": 0.8796,
+      "reservations_expired": 0,
+      "leaked_holds_after_ttl": 0,
+      "provider_cancelled_streams": 0,
+      "degraded_limit_decisions": 0
+    },
+    "cost_budget/2": {
+      "accepted": 99,
+      "rejected_429": 301,
+      "failed": 0,
+      "true_spend_usd": 99.687,
+      "overspend_pct": -0.313,
+      "estimate_error_mean": 0.7702,
+      "reservations_expired": 0,
+      "leaked_holds_after_ttl": 0,
+      "provider_cancelled_streams": 0,
+      "degraded_limit_decisions": 0
+    },
+    "cost_budget_kill_gateway/0": {
+      "accepted": 102,
+      "rejected_429": 117,
+      "failed": 181,
+      "true_spend_usd": 104.746,
+      "overspend_pct": 4.746,
+      "estimate_error_mean": 0.94,
+      "reservations_expired": 1,
+      "leaked_holds_after_ttl": 0,
+      "killed_at_request": 40,
+      "provider_cancelled_streams": 1,
+      "degraded_limit_decisions": 0
+    },
+    "cost_budget_kill_gateway/1": {
+      "accepted": 103,
+      "rejected_429": 116,
+      "failed": 181,
+      "true_spend_usd": 104.821,
+      "overspend_pct": 4.821,
+      "estimate_error_mean": 0.9191,
+      "reservations_expired": 1,
+      "leaked_holds_after_ttl": 0,
+      "killed_at_request": 40,
+      "provider_cancelled_streams": 1,
+      "degraded_limit_decisions": 0
+    },
+    "cost_budget_kill_gateway/2": {
+      "accepted": 96,
+      "rejected_429": 123,
+      "failed": 181,
+      "true_spend_usd": 104.03,
+      "overspend_pct": 4.03,
+      "estimate_error_mean": 0.7624,
+      "reservations_expired": 1,
+      "leaked_holds_after_ttl": 0,
+      "killed_at_request": 40,
+      "provider_cancelled_streams": 1,
+      "degraded_limit_decisions": 0
+    },
+    "request_count_limit/0": {
+      "accepted": 66,
+      "rejected_429": 334,
+      "failed": 0,
+      "true_spend_usd": 114.54,
+      "overspend_pct": 14.54,
+      "estimate_error_mean": 0,
+      "reservations_expired": 0,
+      "leaked_holds_after_ttl": 0,
+      "provider_cancelled_streams": 0,
+      "degraded_limit_decisions": 0
+    },
+    "request_count_limit/1": {
+      "accepted": 66,
+      "rejected_429": 334,
+      "failed": 0,
+      "true_spend_usd": 110.532,
+      "overspend_pct": 10.532,
+      "estimate_error_mean": 0,
+      "reservations_expired": 0,
+      "leaked_holds_after_ttl": 0,
+      "provider_cancelled_streams": 0,
+      "degraded_limit_decisions": 0
+    },
+    "request_count_limit/2": {
+      "accepted": 66,
+      "rejected_429": 334,
+      "failed": 0,
+      "true_spend_usd": 92.424,
+      "overspend_pct": -7.576,
+      "estimate_error_mean": 0,
+      "reservations_expired": 0,
+      "leaked_holds_after_ttl": 0,
+      "provider_cancelled_streams": 0,
+      "degraded_limit_decisions": 0
+    }
+  }
+}

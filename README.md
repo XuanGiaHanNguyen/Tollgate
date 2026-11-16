@@ -60,7 +60,7 @@ flowchart LR
 | E5 | How does Raft behave? | commit p50 13.5 / p99 25.2 ms; failover p50 643 ms; 0 of 17842 writes lost | commit p50 1.5 / p99 2.9 ms; failover p50 548 ms; 0 of 155248 writes lost |
 | E6 | How fast does config reach gateways? | config on all gateways p50 4.8 / p99 16.1 ms after commit | config on all gateways p50 1.6 / p99 8.9 ms after commit |
 | E7 | Does the breaker protect latency? | client errors 16.7% → 1.4% with the breaker | client errors 16.5% → 1.3% with the breaker |
-| E8 | Do cost budgets hold? | overspend -0.17% (reserve-and-settle) vs +14.8% (count limit); 0 leaked holds | — |
+| E8 | Do cost budgets hold? | overspend -0.17% (reserve-and-settle) vs +14.8% (count limit); 0 leaked holds | overspend -0.24% (reserve-and-settle) vs +10.5% (count limit); 0 leaked holds |
 | E9 | Does hedging cut tail latency? | TTFT p99 -49% for +0.77% cost (5% hedge budget) | TTFT p99 -49% for +0.76% cost (5% hedge budget) |
 | E10 | What does the safety filter cost? | 34 MB/s with 10000 patterns; split-pattern recall 100% | 30 MB/s with 10000 patterns; split-pattern recall 100% |
 | E11 | Does safe rollout catch bad config? | bad configs rolled back in 1.2–2.7 s; 12/12 decisions correct | bad configs rolled back in 1.2–2.2 s; 12/12 decisions correct |
