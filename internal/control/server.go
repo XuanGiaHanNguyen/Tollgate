@@ -220,14 +220,16 @@ func (s *Server) handleReady() error {
 			}
 		}
 		for _, e := range rd.Committed {
-			ch, _ := s.fsm.Apply(e)
+			chs, applyErr := s.fsm.Apply(e)
 			if p := s.waiting[e.Index]; p != nil {
 				delete(s.waiting, e.Index)
 				if e.Term != p.term {
 					p.done <- ErrDropped // another leader's entry took this index
+				} else if errors.Is(applyErr, store.ErrCondFailed) {
+					p.done <- applyErr
 				} else {
-					if ch != nil && p.ver != nil {
-						*p.ver = ch.Version
+					if len(chs) > 0 && p.ver != nil {
+						*p.ver = chs[0].Version
 					} else if p.ver != nil {
 						*p.ver = s.fsm.Version
 					}
