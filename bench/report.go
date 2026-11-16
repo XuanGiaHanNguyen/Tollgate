@@ -79,6 +79,10 @@ func main() {
 				writeE3(&b, r)
 			case "E4":
 				writeE4(&b, r)
+			case "E5":
+				writeE5(&b, r)
+			case "E6":
+				writeE6(&b, r)
 			case "E7":
 				writeE7(&b, r)
 			case "E8":
@@ -623,4 +627,95 @@ func writeE9(b *strings.Builder, r *benchfmt.Result) {
 		fmt.Fprintf(b, "- %s: %s\n", m.Name, strings.Join(vals, ", "))
 	}
 	b.WriteString("\nMedian run per mode by p99. Extra cost compares true provider billing per successful request with the hedging-off median run.\n\n")
+}
+
+// ---- E5 ----
+
+type e5Summary struct {
+	Runs []struct {
+		Writes        int       `json:"writes"`
+		CommitP50Ms   float64   `json:"commit_p50_ms"`
+		CommitP99Ms   float64   `json:"commit_p99_ms"`
+		Failovers     []float64 `json:"failover_ms"`
+		Elections     []float64 `json:"new_leader_ms"`
+		FailoverP50Ms float64   `json:"failover_p50_ms"`
+		FailoverMaxMs float64   `json:"failover_max_ms"`
+		Acked         int       `json:"acknowledged_writes"`
+		Lost          int       `json:"lost_entries"`
+	} `json:"runs"`
+	Median int `json:"median_run"`
+}
+
+func writeE5(b *strings.Builder, r *benchfmt.Result) {
+	var s e5Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: %v nodes, tick %v; %v. Commit latency: %v. Failover: %v. Loss check: %v.\n\n",
+		r.Params["nodes"], r.Params["tick"], r.Params["storage"], r.Params["commit_latency"], r.Params["failover"], r.Params["loss_check"])
+	m := s.Runs[s.Median]
+	var all, elect []float64
+	acked, lost := 0, 0
+	for _, run := range s.Runs {
+		all = append(all, run.Failovers...)
+		elect = append(elect, run.Elections...)
+		acked += run.Acked
+		lost += run.Lost
+	}
+	sort.Float64s(all)
+	sort.Float64s(elect)
+	q := func(xs []float64, p float64) float64 {
+		if len(xs) == 0 {
+			return 0
+		}
+		i := int(p * float64(len(xs)))
+		if i >= len(xs) {
+			i = len(xs) - 1
+		}
+		return xs[i]
+	}
+	b.WriteString("| Measure | Result |\n| --- | --- |\n")
+	fmt.Fprintf(b, "| Commit latency p50 / p99 (median run, %d writes) | %.2f ms / %.2f ms |\n", m.Writes, m.CommitP50Ms, m.CommitP99Ms)
+	fmt.Fprintf(b, "| Leader failover: kill → new leader elected, p50 / max (%d kills) | %.0f ms / %.0f ms |\n", len(elect), q(elect, 0.5), q(elect, 1))
+	fmt.Fprintf(b, "| Leader failover: kill → first write accepted, p50 / max | %.0f ms / %.0f ms |\n", q(all, 0.5), q(all, 1))
+	fmt.Fprintf(b, "| **Committed entries lost** | **%d of %d acknowledged writes** |\n\n", lost, acked)
+	b.WriteString("Per run (commit p50/p99 ms; failover p50/max ms; lost):\n\n")
+	for i, run := range s.Runs {
+		fmt.Fprintf(b, "- run %d: %.2f / %.2f; %.0f / %.0f; %d lost of %d\n", i+1, run.CommitP50Ms, run.CommitP99Ms, run.FailoverP50Ms, run.FailoverMaxMs, run.Lost, run.Acked)
+	}
+	b.WriteString("\n")
+}
+
+// ---- E6 ----
+
+type e6Summary struct {
+	Runs []struct {
+		Changes  int     `json:"changes"`
+		P50Ms    float64 `json:"all_p50_ms"`
+		P99Ms    float64 `json:"all_p99_ms"`
+		GWP50Ms  float64 `json:"per_gateway_p50_ms"`
+		GWP99Ms  float64 `json:"per_gateway_p99_ms"`
+		TimedOut int     `json:"timed_out"`
+	} `json:"runs"`
+	Median int `json:"median_run"`
+}
+
+func writeE6(b *strings.Builder, r *benchfmt.Result) {
+	var s e6Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: %v rule changes through %v control nodes to %v gateways; %v; %v.\n\n",
+		r.Params["changes"], r.Params["control_nodes"], r.Params["gateways"], r.Params["change"], r.Params["measure"])
+	m := s.Runs[s.Median]
+	b.WriteString("| Propagation | p50 | p99 |\n| --- | --- | --- |\n")
+	fmt.Fprintf(b, "| Commit → active on **all** gateways (median run) | %.2f ms | %.2f ms |\n", m.P50Ms, m.P99Ms)
+	fmt.Fprintf(b, "| Commit → active on one gateway | %.2f ms | %.2f ms |\n\n", m.GWP50Ms, m.GWP99Ms)
+	b.WriteString("Per run (all gateways p50 / p99 ms; timeouts):\n\n")
+	for i, run := range s.Runs {
+		fmt.Fprintf(b, "- run %d: %.2f / %.2f; %d\n", i+1, run.P50Ms, run.P99Ms, run.TimedOut)
+	}
+	b.WriteString("\n")
 }
