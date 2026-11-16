@@ -96,7 +96,8 @@ func TestHalfOpenRecovery(t *testing.T) {
 		t.Fatalf("state = %v, want half-open", s)
 	}
 	// Only HalfOpenProbes concurrent probes are admitted.
-	if !b.Allow() || !b.Allow() {
+	p1, p2 := b.Allow(), b.Allow()
+	if !p1 || !p2 {
 		t.Fatal("probes not admitted")
 	}
 	if b.Allow() {

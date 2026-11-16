@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/proxy"
 )
 
 func main() {
 	cfgPath := flag.String("config", "tollgate.yaml", "path to gateway config")
 	logLevel := flag.String("log-level", "info", "debug, info, warn or error")
+	node := flag.String("node", defaultNode(), "node name used in metric labels")
 	flag.Parse()
 
 	var lvl slog.Level
@@ -31,18 +33,30 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 	slog.SetDefault(log)
 
-	if err := run(*cfgPath, log); err != nil {
+	if err := run(*cfgPath, *node, log); err != nil {
 		log.Error("exit", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(cfgPath string, log *slog.Logger) error {
+func defaultNode() string {
+	if n := os.Getenv("TOLLGATE_NODE"); n != "" {
+		return n
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return "gw"
+}
+
+func run(cfgPath, node string, log *slog.Logger) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
 	}
-	gw, err := proxy.New(cfg, proxy.Options{Logger: log})
+	m := metrics.NewGateway(node)
+	m.SetConfigVersion(1) // static file config; versions come from the control plane in M6
+	gw, err := proxy.New(cfg, proxy.Options{Logger: log, Metrics: m})
 	if err != nil {
 		return err
 	}
@@ -63,6 +77,7 @@ func run(cfgPath string, log *slog.Logger) error {
 		w.Write([]byte("ok\n"))
 	})
 
+	admin.Handle("GET /metrics", m.Handler())
 	admin.HandleFunc("GET /admin/upstreams", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(gw.Status())
@@ -76,7 +91,7 @@ func run(cfgPath string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	log.Info("tollgate-gw started", "listen", cfg.Listen, "admin", cfg.AdminListen,
+	log.Info("tollgate-gw started", "node", node, "listen", cfg.Listen, "admin", cfg.AdminListen,
 		"routes", len(cfg.Routes), "upstreams", len(cfg.Upstreams))
 
 	go func() {

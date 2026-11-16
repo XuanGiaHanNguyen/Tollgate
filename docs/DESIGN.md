@@ -62,3 +62,92 @@ Not benchmark results for `METRICS.md` (those come from `bench/` in M2), just ch
 - Micro-benchmarks (`go test -bench`, parallel): breaker Allow+Record 51 ns/op, balancer pick 38–52 ns/op, all 0 allocs. Full `ServeHTTP` through a loopback backend: ~14.7 µs/op, 114 allocs/op — mostly `net/http` client/server; to be profiled in M2.
 - Kill-backend (local processes, `make chaos-kill-backend-local`, 1 s probe interval, 3 runs): gateway marked the killed backend down 67–69 ms after the kill (passive ejection fires before the next active probe); 0 client-visible errors because retries rerouted.
 - docker-compose: **not verified** — Docker is not installed on the dev machine.
+
+## M2: Metrics and first numbers — plan
+
+### Live metrics (`internal/metrics`)
+- One `prometheus.Registry` per process (not the global default), exposed on the admin listener at `/metrics`, plus Go runtime and process collectors.
+- M2 registers the metrics that M1 code can produce: `tollgate_requests_total{route,status,node}`, `tollgate_request_duration_seconds{route,node}`, `tollgate_gateway_overhead_seconds{node}`, `tollgate_breaker_state{backend}`, `tollgate_backend_healthy{backend}`, `tollgate_retries_total{route}`, `tollgate_config_version{node}`. The rest of the spec's table is added by the milestone that creates the behavior, so no metric is exported that is always zero.
+- **Hot path:** `*Vec.WithLabelValues` hashes labels and takes a read lock on every call. Handles are resolved once per route at build time (duration, retries) and per (route, status) through a per-route `sync.Map` that is read-mostly after warm-up. No lock is taken per request after the first request with a given status.
+- **Gateway overhead** = wall time in `ServeHTTP` − time spent inside upstream `RoundTrip` calls (connect + send + wait for headers, summed over attempts). Retry backoff counts as overhead because the gateway chose to wait. Body streaming after headers is excluded because it is paced by the backend. Considered: taking overhead only from k6 (gateway vs direct): kept too, as a cross-check, because it includes the extra network hop.
+- Status capture uses a `ResponseWriter` wrapper with `Unwrap()`, so `http.ResponseController` (used by ReverseProxy to flush SSE in M5) still reaches the real writer.
+
+### Benchmarks
+- `bench/k6/` holds the scripts; `bench/run` (Go) orchestrates a run: starts processes (laptop mode) or targets compose, drives k6, injects failures, samples gateway CPU/RSS, and writes `bench/results/<exp>-<date>.json` with the environment (git commit, machine, CPU, Go and k6 versions, node count, duration) and the raw k6 summaries.
+- `bench/report.go` regenerates `docs/METRICS.md` from the newest result per experiment, laptop and AWS in separate sections.
+- **E1:** k6 `constant-arrival-rate` on a rising RPS ladder for three targets: direct to backend, 1 gateway, 3 gateways (k6 spreads requests across the gateway URLs, standing in for the ALB). A level passes if p99 < limit and errors < 0.1% and k6 kept up with the arrival rate (dropped iterations < 1%); the ladder stops at the first failing level. 3 repetitions per level; the median run is reported.
+- **E7:** 3 backends, one switched to 50% errors mid-run and back. Breaker on vs off, otherwise identical config (passive ejection off in both, so the breaker is the only thing reacting). Records p99 and error rate per phase and the times failure→open and recovery→closed, from polling `/admin/upstreams` every 10 ms.
+- Laptop caveat: k6, gateways and backends share the same 8 cores, so absolute RPS is a floor set by the laptop, not the gateway alone. The result files record this.
+
+### CI
+GitHub Actions: gofmt check, `go vet`, `staticcheck`, `go test -race` with coverage report, build all binaries, `docker build` for each image.
+
+## M2: decisions log
+
+- **Go 1.26.** `prometheus/client_golang` v1.25 requires Go 1.26, so the module and Dockerfile moved from 1.25 to 1.26 (the spec asks for latest stable).
+- **Metrics cost.** Pre-resolved handles keep label hashing off the hot path; with metrics on, `ServeHTTP` goes from 114 to 116–117 allocs/op and no measurable ns/op change (`BenchmarkGatewayServeHTTP*`).
+- **E7 breaker settings.** With the default `error_rate: 0.5`, a backend failing exactly 50% of requests hovers around the threshold and may never trip. E7 uses `window: 5s, error_rate: 0.3, min_requests: 20, cooldown: 2s, half_open_probes: 3`; these are recorded in the result file. Expected time to open ≈ 0.3/0.5 × 5 s = 3 s, because the window still holds pre-failure successes.
+- **E7 failures are fast 500s.** The mock answers injected errors immediately, and 500 is not retried (only 502/503/504 and connection errors are). So the breaker mostly changes the **error rate** clients see; any p99 change is secondary. Both are reported.
+- **E7 failure injection runs inside k6** (one-shot scenarios at fixed offsets), so the phase boundaries in k6's tagged metrics match the moment the backend changes. The runner timestamps the change by polling the backend, and timestamps breaker transitions by polling `/admin/upstreams` (10 ms resolution).
+- **Laptop noise.** The dev laptop runs other apps (load average 3–6 before benchmarks). Repeated identical runs at 1000 req/s through one gateway gave client p99 of 2.8, 13 and 37 ms, while the gateway's own overhead stayed ≤ 1.6 ms for every request and k6 dropped iterations, so the tail comes from scheduling on a shared machine, not the gateway. The E1 pass limit (p99 < 10 ms) was chosen in the plan before any data and was not changed. Instead, a 500 req/s level was added and every result now records the load average at start. AWS runs (M8) are the clean numbers.
+- **CI.** gofmt, vet, staticcheck v0.8.2, race tests with a coverage summary, binary build, and `docker build` per image. The first run on GitHub passed, which is the first check that the Dockerfile builds.
+
+## M3: Rule language — plan
+
+### Scope split: YAML vs rules
+YAML keeps infrastructure: listeners, upstreams, routes to upstreams, timeouts, retries. The rule file holds **policy**: auth, limits, deny, headers. A rule `route "<pattern>"` block selects which policy runs for a request path; it does not pick an upstream. (Upstreams move to the control plane in M6.)
+
+### Finalized grammar (EBNF)
+```
+program    = { letDecl | route } ;
+letDecl    = "let" IDENT "=" expr ;
+route      = "route" STRING "{" { stmt } "}" ;
+stmt       = "require" "auth"
+           | "when" expr "{" { stmt } "}"
+           | "limit" INT "per" unit "by" expr
+           | "deny" INT
+           | "set_header" STRING expr ;
+unit       = "second" | "minute" | "hour" | "day" ;
+expr       = binary | unary | primary ;
+binary     = expr op expr ;         (* Pratt; precedence low→high: || , && , == != , < <= > >= , + - , * / *)
+unary      = ( "!" | "-" ) expr ;
+primary    = INT | STRING | "true" | "false" | IDENT | field | call | "(" expr ")" ;
+field      = IDENT "." IDENT ;
+call       = IDENT "(" [ expr { "," expr } ] ")" ;
+```
+- Comments: `#` to end of line. Strings: double-quoted with `\" \\ \n \t` escapes.
+- Route pattern: `"/x/*"` matches `/x` and anything under it (segment-aware, like M1 prefixes); without `*` it matches exactly. The most specific route (longest literal prefix, exact beats wildcard) runs; only one route runs per request.
+
+### Semantics
+- Statements run in order. `deny N` ends evaluation with status N (400–599). `limit` statements accumulate, and every applicable limit must admit the request. `set_header` accumulates request headers added before proxying. `require auth` denies 401 if the request is not authenticated.
+- **Auth (M3 choice):** static API keys in the YAML (`auth.api_keys: [{key, user_id, tier}]`), sent as `Authorization: Bearer <key>`. This fills `user.id` and `user.tier`; unauthenticated requests see empty strings. Considered trusting `X-User-*` headers from an upstream identity proxy (simpler, but unsafe without one) and JWT (more work, no extra learning for this project). Swappable later.
+- **Fields:** `user.id`, `user.tier`, `client.ip`, `request.method`, `request.path`, `request.host` (all string). **Builtins:** `header(string) string`, `query(string) string`, `cidr_match(ip string, cidr string) bool`.
+- **Types:** `int`, `string`, `bool`. `== !=` need equal types; `< <= > >=` and `+ - * /` need ints; `&& || !` need bools; `when` needs bool; `limit … by` key must be string; `set_header` value must be string.
+- **Runtime errors** (division by zero, VM budget exceeded): fail closed with 500 and a counted metric. Constant division by zero is a compile error.
+
+### Pipeline (one package each under `internal/rules/`)
+1. `lexer`: hand-written, every token carries line:col.
+2. `parser`: recursive descent for statements, Pratt for expressions; on error, skips to the next statement or `}` and keeps going, so one pass reports several errors.
+3. `types`: resolves `let` (must be defined before use, no redefinition), fields and builtins; reports all errors with positions.
+4. `analysis`: (a) **shadowed rules**: a `when` block after an unconditional `deny`, or after `when C { deny … }` where its own condition implies `C` (syntactic implication: equal, or a conjunction containing `C`), can never have effect; (b) **route conflicts**: duplicate route patterns (error); overlapping patterns whose `limit`s on the same key and unit disagree (warning); (c) **instruction bound**: the language has no loops or backward jumps, so the longest path through a route's bytecode is at most its length; reject routes whose bound exceeds the VM budget; (d) unused `let` (warning).
+5. `opt`: inline `let`s, fold constants (arithmetic, comparisons, `&&`/`||` with a constant side, `!`), drop `when false` blocks, turn `when true { … }` into its body, remove statements after an unconditional `deny`.
+6. `compiler`: AST → `[]Instr{Op, Arg}` per route, with a constant pool. Opcodes: `PUSH_CONST LOAD_FIELD CALL_BUILTIN EQ NE LT LE GT GE ADD SUB MUL DIV NEG NOT JUMP JUMP_IF_FALSE AND/OR` (short-circuit via `JUMP_IF_FALSE`/`JUMP_IF_TRUE` + `POP`), `REQUIRE_AUTH LIMIT DENY SET_HEADER RETURN`.
+7. `vm`: stack machine with a fixed-size value stack in a pooled frame; values are a small tagged struct (no interfaces, no boxing). Header names are canonicalized at compile time, so `header()` is a direct map lookup with no allocation. Per-request instruction budget.
+8. `interp`: tree-walking evaluator over the same (optimized) AST, used as the E2 baseline and as the oracle in differential tests.
+
+### Testing
+Golden files under each package's `testdata/` (input `.tg`, expected tokens / AST dump / errors). Fuzz targets: lexer and parser never panic; VM never exceeds its budget. Differential test: a random generator of well-typed programs and requests; interpreter on the unoptimized AST, interpreter on the optimized AST, and the VM must give identical decisions.
+
+### Integration
+- `rules_file` in the gateway YAML. Compiled rules sit in an `atomic.Pointer` next to the router; a file watcher (mtime poll, 1 s) recompiles and swaps. On a compile error the old version keeps serving and the error is logged. `tollgate_config_version` increments on each swap. In-flight requests finish on the version they started with.
+- `limit` is enforced in M3 by a local in-memory token bucket per (route, limit, key). M4 replaces it with the distributed limiter. `tollgate_rule_eval_seconds{engine}` is recorded.
+
+### E2
+`bench/go/rules_bench_test.go`: 5 rule sets from small to large (generated deterministically), VM vs interpreter, `-benchmem`. `go run ./bench/run e2` runs it 3× (`-count=3`), takes the median, and writes the result file.
+- **Machine sleep invalidated the first full run.** With the lid closed on battery the laptop slept between runs, which k6 counted as thousands of dropped iterations. Nothing was recorded. The runner now discards any k6 run that takes 20 s longer than planned and records AC vs battery. The final E1 started on battery; E7 ran on AC.
+
+## M2: measured results (laptop; full tables in METRICS.md)
+
+- **E1:** 1 gateway and 3 gateways each sustained 15,000 req/s with p99 < 10 ms; direct passed the top level tested (20,000). Added median latency ≈ 0.05 ms from 2,500 to 15,000 req/s. In-gateway overhead ≈ 25 µs p50 / ≤ 50 µs p99 (bucket resolution). 1 gateway used 1.23 cores at 15k. **Goal check:** "overhead p99 under 2 ms at moderate load" holds for the in-gateway overhead (≤ 50 µs); end-to-end added p99 is dominated by laptop noise (it ranges from −1.7 to +1.0 ms below 15k).
+- **3 gateways do not beat 1 on the laptop.** At 20,000 req/s, 3 gateways collapsed (p99 976 ms, 7.5% errors, 483k dropped iterations), because k6, 3 gateways and 3 backends compete for 8 cores (load average 32.9 right after). This is a property of the test machine, not a gateway limit; multi-node scaling has to be measured on AWS (M8).
+- **E7:** with one backend failing 50%, the breaker cut the error rate clients saw from 16.7% to 1.4% (median runs). It opened 2.86–3.08 s after the failure (expected ≈ 3 s from window 5 s × 0.3/0.5) and closed 1.0–1.6 s after recovery (cooldown 2 s, so it closes on the next half-open probe round). It re-opened ~15 times during the 40 s failing phase, since half-open probes keep hitting 50% errors. Failing-phase p99 was 6.2 ms on vs 6.4 ms off: as predicted, fast 500s don't hurt latency, so the breaker's benefit here is errors, not p99.

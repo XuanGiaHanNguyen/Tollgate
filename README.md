@@ -9,7 +9,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 | Milestone | State |
 | --- | --- |
 | M1 Single-node gateway | done (compose run not yet verified) |
-| M2 Metrics and first numbers | not started |
+| M2 Metrics and first numbers | done: see [`docs/METRICS.md`](docs/METRICS.md) |
 | M3 Rule language | not started |
 | M4 Distributed rate limiting | not started |
 | M5 AI gateway | not started |
@@ -24,7 +24,9 @@ make build                     # bin/tollgate-gw, bin/mockbackend
 make race                      # unit tests with the race detector
 make chaos-kill-backend-local  # kill a backend under load (no Docker needed)
 
-make up                        # docker-compose: 1 gateway + 3 backends
+make bench-e1 && make report   # load test (k6), regenerate docs/METRICS.md
+
+make up                        # docker-compose: 1 gateway + 3 backends, Prometheus :9091, Grafana :3000
 curl localhost:8080/hello      # proxied; X-Backend header shows which backend
 curl localhost:9090/admin/upstreams
 make chaos-kill-backend        # same kill check against compose

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 )
 
 // backend is a test upstream whose behavior can change mid-test.
@@ -392,6 +393,29 @@ upstreams: [{name: api, targets: [{url: %s}]}]
 routes: [{prefix: /, upstream: api}]
 `, srv.URL)))
 	g, _ := New(cfg, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			req := httptest.NewRequest("GET", "/x", nil)
+			w := httptest.NewRecorder()
+			g.ServeHTTP(w, req)
+			if w.Code != 200 {
+				b.Fatalf("status %d", w.Code)
+			}
+		}
+	})
+}
+
+func BenchmarkGatewayServeHTTPWithMetrics(b *testing.B) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	cfg, _ := config.Parse([]byte(fmt.Sprintf(`
+upstreams: [{name: api, targets: [{url: %s}]}]
+routes: [{prefix: /, upstream: api}]
+`, srv.URL)))
+	g, _ := New(cfg, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: metrics.NewGateway("bench")})
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
