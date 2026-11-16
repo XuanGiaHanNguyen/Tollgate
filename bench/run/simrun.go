@@ -47,10 +47,7 @@ func runSim() (*benchfmt.Result, error) {
 	}
 	simSecs := time.Since(start).Seconds()
 	mut, merr := exec.Command("python3", "bench/sim/mutants.py", "3000").CombinedOutput()
-	var mutants []string
-	for _, l := range strings.Split(strings.TrimSpace(string(mut)), "\n") {
-		mutants = append(mutants, l)
-	}
+	mutants := strings.Split(strings.TrimSpace(string(mut)), "\n")
 	log.Printf("SIM %d seeds x %d suites ok in %.0fs; mutants:\n%s", seeds, len(suites), simSecs, mut)
 	res.FinishedAt = time.Now().UTC()
 	res.Summary = mustJSON(map[string]any{"suites": suites, "seconds": round(simSecs, 1), "mutants": mutants, "all_mutants_caught": merr == nil})
