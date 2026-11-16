@@ -21,8 +21,17 @@ func StoreOptions() Options {
 	keys := []string{"rules", "members", "pricing", "pattern_sets"}
 	o.NewProposal = func(r *rand.Rand, n int) []byte {
 		c := store.Command{Op: "put", Key: keys[r.IntN(len(keys))], Value: []byte(fmt.Sprintf("v%d", n)), TS: int64(n)}
-		if r.IntN(10) == 0 {
+		switch r.IntN(10) {
+		case 0:
 			c.Op = "delete"
+		case 1, 2: // multi-key txn, sometimes guarded (rollout decisions use these)
+			c = store.Command{Op: "txn", TS: int64(n), Ops: []store.Command{
+				{Op: "put", Key: "rules", Value: []byte(fmt.Sprintf("t%d", n))},
+				{Op: "put", Key: "rollout", Value: []byte(fmt.Sprintf("t%d", n))},
+			}}
+			if r.IntN(2) == 0 {
+				c.If = &store.Cond{Key: "rollout", Version: uint64(r.IntN(50))}
+			}
 		}
 		return c.Encode()
 	}

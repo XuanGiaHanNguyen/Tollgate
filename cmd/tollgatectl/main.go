@@ -13,6 +13,7 @@ import (
 	tollgatev1 "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/control"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/client"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/rollout"
 )
 
 const usage = `usage: tollgatectl [-endpoints host:port,...] <command>
@@ -22,6 +23,9 @@ commands:
   rules push <file>           validate and commit a rule file
   rules check <file>          compile a rule file locally, without committing
   rules get                   print the committed rules
+  rules rollout <file> <gw>   canary rollout: <gw> runs the new rules first; the
+                              control plane promotes or rolls back automatically
+  rollout status              current rollout and its outcome
   put <key> <value|@file>     write a key
   get <key>                   linearizable read
   watch [from-version]        stream changes
@@ -88,6 +92,36 @@ func run(ctx context.Context, c *client.Client, endpoints, args []string) error 
 			return err
 		}
 		fmt.Println("ok")
+		return nil
+	case len(args) == 4 && args[0] == "rules" && args[1] == "rollout":
+		src, err := os.ReadFile(args[2])
+		if err != nil {
+			return err
+		}
+		req := rollout.Record{Candidate: src, Canary: args[3]}
+		v, err := c.Put(ctx, rollout.KeyRollout, req.Encode())
+		if err != nil {
+			return err
+		}
+		fmt.Printf("rollout started at version %d: canary %s; watch with 'tollgatectl rollout status'\n", v, args[3])
+		return nil
+	case len(args) == 2 && args[0] == "rollout" && args[1] == "status":
+		r, err := c.Get(ctx, rollout.KeyRollout)
+		if err != nil {
+			return err
+		}
+		if !r.Found {
+			fmt.Println("no rollout yet")
+			return nil
+		}
+		rec, err := rollout.Decode(r.Value)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("rollout %s: %s (canary %s)\n", rec.ID, rec.State, rec.Canary)
+		if rec.DecidedTS > 0 {
+			fmt.Printf("decided after %v: %s\n", time.Duration(rec.DecidedTS-rec.StartedTS).Round(time.Millisecond), rec.Reason)
+		}
 		return nil
 	case len(args) == 2 && args[0] == "rules" && args[1] == "get":
 		r, err := c.Get(ctx, "rules")

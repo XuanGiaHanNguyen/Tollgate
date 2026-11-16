@@ -35,6 +35,39 @@ func TestApplyVersionsAndSince(t *testing.T) {
 	}
 }
 
+func TestTxnAtomicAndConditional(t *testing.T) {
+	f := New()
+	f.Apply(put(1, "rollout", "canary"))
+	txn := Command{Op: "txn", If: &Cond{Key: "rollout", Version: 1}, Ops: []Command{
+		{Op: "put", Key: "rules", Value: []byte("new")},
+		{Op: "put", Key: "rollout", Value: []byte("promoted")},
+	}}
+	chs, err := f.Apply(raft.Entry{Index: 2, Term: 1, Data: txn.Encode()})
+	if err != nil || len(chs) != 2 || chs[0].Version != 2 || chs[1].Version != 2 {
+		t.Fatalf("txn: %+v %v", chs, err)
+	}
+	if it, _ := f.Get("rules"); string(it.Value) != "new" {
+		t.Fatal("txn put not applied")
+	}
+	// The same guarded txn again: rollout's version is now 2, so it fails
+	// and changes nothing (a deposed leader can't decide twice).
+	before := f.Hash()
+	if _, err := f.Apply(raft.Entry{Index: 3, Term: 1, Data: txn.Encode()}); err != ErrCondFailed {
+		t.Fatalf("err = %v", err)
+	}
+	if f.Applied != 3 {
+		t.Fatal("failed txn must still advance applied")
+	}
+	f.Applied = 2
+	if f.Hash() != before {
+		t.Fatal("failed txn changed state")
+	}
+	// Cond version 0 = key must not exist.
+	if _, err := f.Apply(raft.Entry{Index: 4, Data: Command{Op: "txn", If: &Cond{Key: "absent"}, Ops: []Command{{Op: "put", Key: "x", Value: []byte("1")}}}.Encode()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHistoryTrimForcesFullSync(t *testing.T) {
 	f := New()
 	for i := uint64(1); i <= HistoryLen+10; i++ {

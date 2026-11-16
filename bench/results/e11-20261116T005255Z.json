@@ -1,0 +1,313 @@
+{
+  "experiment": "E11",
+  "started_at": "2026-11-16T00:52:55.186474Z",
+  "finished_at": "2026-11-16T00:54:21.374096Z",
+  "env": {
+    "mode": "laptop",
+    "git_commit": "c7ac7d81e8cba51af256caadf1940355efc008bd",
+    "git_dirty": false,
+    "machine": "Mac14,15",
+    "cpu": "Apple M2",
+    "cpus": 8,
+    "memory_gb": 16,
+    "os": "darwin/arm64",
+    "go_version": "go1.27.4",
+    "k6_version": "k6 v2.4.0",
+    "node_count": 3,
+    "topology": "local processes: 3 tollgate-control + 3 tollgate-gw + 3 mockbackend",
+    "load_avg_1m_at_start": "2.70",
+    "power": "battery"
+  },
+  "params": {
+    "control_nodes": 3,
+    "exposure": "requests sent to the canary between rollout commit and decision, over all requests in that interval (round-robin over 3 gateways)",
+    "gateways": 3,
+    "policy": "roll back if canary error rate \u003e baseline + 5 pts or p99 \u003e 1.5x baseline + 5ms; promote after a healthy window; min 100 requests per side",
+    "rate": 300,
+    "reps": 3,
+    "scenarios": "deny_30pct: candidate denies the 30% of requests with b=1; slow_50ms: candidate adds 50ms (X-Mock-Delay); good: harmless change; deny_30pct_leader_killed: control leader SIGKILLed 300ms into the canary, before any verdict is possible",
+    "window": "10s"
+  },
+  "summary": {
+    "cases": [
+      {
+        "scenario": "deny_30pct",
+        "outcome": "rolled_back",
+        "reason": "canary error rate 29.5% vs baseline 0.0% (allowed +5.0 pts)",
+        "commit_to_decision_ms": 1568,
+        "exposed_pct": 33.41,
+        "exposed_requests": 155,
+        "bad_responses": 46,
+        "rollout_requests": 464,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "slow_50ms",
+        "outcome": "rolled_back",
+        "reason": "canary p99 101.5ms vs baseline 0.7ms (limit 6.1ms)",
+        "commit_to_decision_ms": 1186,
+        "exposed_pct": 32.19,
+        "exposed_requests": 113,
+        "bad_responses": 113,
+        "rollout_requests": 351,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "good",
+        "outcome": "promoted",
+        "reason": "canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.8ms vs 0.7ms)",
+        "commit_to_decision_ms": 10183,
+        "exposed_pct": 33.33,
+        "exposed_requests": 1014,
+        "bad_responses": 0,
+        "rollout_requests": 3042,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "deny_30pct_leader_killed",
+        "outcome": "rolled_back",
+        "reason": "canary error rate 30.4% vs baseline 0.0% (allowed +5.0 pts)",
+        "commit_to_decision_ms": 2689,
+        "exposed_pct": 33.33,
+        "exposed_requests": 268,
+        "bad_responses": 79,
+        "rollout_requests": 804,
+        "leader_killed": true,
+        "decided_after_kill": true,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "deny_30pct",
+        "outcome": "rolled_back",
+        "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+        "commit_to_decision_ms": 1380,
+        "exposed_pct": 33.33,
+        "exposed_requests": 138,
+        "bad_responses": 41,
+        "rollout_requests": 414,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "slow_50ms",
+        "outcome": "rolled_back",
+        "reason": "canary p99 50.9ms vs baseline 1.2ms (limit 6.8ms)",
+        "commit_to_decision_ms": 1184,
+        "exposed_pct": 32.48,
+        "exposed_requests": 114,
+        "bad_responses": 113,
+        "rollout_requests": 351,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "good",
+        "outcome": "promoted",
+        "reason": "canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.7ms vs 0.8ms)",
+        "commit_to_decision_ms": 10183,
+        "exposed_pct": 33.33,
+        "exposed_requests": 1015,
+        "bad_responses": 0,
+        "rollout_requests": 3045,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "deny_30pct_leader_killed",
+        "outcome": "rolled_back",
+        "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+        "commit_to_decision_ms": 2172,
+        "exposed_pct": 33.33,
+        "exposed_requests": 217,
+        "bad_responses": 65,
+        "rollout_requests": 651,
+        "leader_killed": true,
+        "decided_after_kill": true,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "deny_30pct",
+        "outcome": "rolled_back",
+        "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+        "commit_to_decision_ms": 1359,
+        "exposed_pct": 33.17,
+        "exposed_requests": 135,
+        "bad_responses": 41,
+        "rollout_requests": 407,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "slow_50ms",
+        "outcome": "rolled_back",
+        "reason": "canary p99 76.8ms vs baseline 0.7ms (limit 6.1ms)",
+        "commit_to_decision_ms": 1192,
+        "exposed_pct": 32.39,
+        "exposed_requests": 115,
+        "bad_responses": 115,
+        "rollout_requests": 355,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "good",
+        "outcome": "promoted",
+        "reason": "canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.8ms vs 0.7ms)",
+        "commit_to_decision_ms": 10183,
+        "exposed_pct": 33.32,
+        "exposed_requests": 1012,
+        "bad_responses": 0,
+        "rollout_requests": 3037,
+        "canary_reverted_or_promoted": true
+      },
+      {
+        "scenario": "deny_30pct_leader_killed",
+        "outcome": "rolled_back",
+        "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+        "commit_to_decision_ms": 2187,
+        "exposed_pct": 33.38,
+        "exposed_requests": 217,
+        "bad_responses": 64,
+        "rollout_requests": 650,
+        "leader_killed": true,
+        "decided_after_kill": true,
+        "canary_reverted_or_promoted": true
+      }
+    ]
+  },
+  "raw": [
+    {
+      "scenario": "deny_30pct",
+      "outcome": "rolled_back",
+      "reason": "canary error rate 29.5% vs baseline 0.0% (allowed +5.0 pts)",
+      "commit_to_decision_ms": 1568,
+      "exposed_pct": 33.41,
+      "exposed_requests": 155,
+      "bad_responses": 46,
+      "rollout_requests": 464,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "slow_50ms",
+      "outcome": "rolled_back",
+      "reason": "canary p99 101.5ms vs baseline 0.7ms (limit 6.1ms)",
+      "commit_to_decision_ms": 1186,
+      "exposed_pct": 32.19,
+      "exposed_requests": 113,
+      "bad_responses": 113,
+      "rollout_requests": 351,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "good",
+      "outcome": "promoted",
+      "reason": "canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.8ms vs 0.7ms)",
+      "commit_to_decision_ms": 10183,
+      "exposed_pct": 33.33,
+      "exposed_requests": 1014,
+      "bad_responses": 0,
+      "rollout_requests": 3042,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "deny_30pct_leader_killed",
+      "outcome": "rolled_back",
+      "reason": "canary error rate 30.4% vs baseline 0.0% (allowed +5.0 pts)",
+      "commit_to_decision_ms": 2689,
+      "exposed_pct": 33.33,
+      "exposed_requests": 268,
+      "bad_responses": 79,
+      "rollout_requests": 804,
+      "leader_killed": true,
+      "decided_after_kill": true,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "deny_30pct",
+      "outcome": "rolled_back",
+      "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+      "commit_to_decision_ms": 1380,
+      "exposed_pct": 33.33,
+      "exposed_requests": 138,
+      "bad_responses": 41,
+      "rollout_requests": 414,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "slow_50ms",
+      "outcome": "rolled_back",
+      "reason": "canary p99 50.9ms vs baseline 1.2ms (limit 6.8ms)",
+      "commit_to_decision_ms": 1184,
+      "exposed_pct": 32.48,
+      "exposed_requests": 114,
+      "bad_responses": 113,
+      "rollout_requests": 351,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "good",
+      "outcome": "promoted",
+      "reason": "canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.7ms vs 0.8ms)",
+      "commit_to_decision_ms": 10183,
+      "exposed_pct": 33.33,
+      "exposed_requests": 1015,
+      "bad_responses": 0,
+      "rollout_requests": 3045,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "deny_30pct_leader_killed",
+      "outcome": "rolled_back",
+      "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+      "commit_to_decision_ms": 2172,
+      "exposed_pct": 33.33,
+      "exposed_requests": 217,
+      "bad_responses": 65,
+      "rollout_requests": 651,
+      "leader_killed": true,
+      "decided_after_kill": true,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "deny_30pct",
+      "outcome": "rolled_back",
+      "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+      "commit_to_decision_ms": 1359,
+      "exposed_pct": 33.17,
+      "exposed_requests": 135,
+      "bad_responses": 41,
+      "rollout_requests": 407,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "slow_50ms",
+      "outcome": "rolled_back",
+      "reason": "canary p99 76.8ms vs baseline 0.7ms (limit 6.1ms)",
+      "commit_to_decision_ms": 1192,
+      "exposed_pct": 32.39,
+      "exposed_requests": 115,
+      "bad_responses": 115,
+      "rollout_requests": 355,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "good",
+      "outcome": "promoted",
+      "reason": "canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.8ms vs 0.7ms)",
+      "commit_to_decision_ms": 10183,
+      "exposed_pct": 33.32,
+      "exposed_requests": 1012,
+      "bad_responses": 0,
+      "rollout_requests": 3037,
+      "canary_reverted_or_promoted": true
+    },
+    {
+      "scenario": "deny_30pct_leader_killed",
+      "outcome": "rolled_back",
+      "reason": "canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)",
+      "commit_to_decision_ms": 2187,
+      "exposed_pct": 33.38,
+      "exposed_requests": 217,
+      "bad_responses": 64,
+      "rollout_requests": 650,
+      "leader_killed": true,
+      "decided_after_kill": true,
+      "canary_reverted_or_promoted": true
+    }
+  ]
+}

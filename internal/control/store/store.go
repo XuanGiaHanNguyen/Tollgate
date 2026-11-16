@@ -21,11 +21,25 @@ const HistoryLen = 1024
 
 // Command is what gets proposed to Raft.
 type Command struct {
-	Op    string `json:"op"` // "put" or "delete"
-	Key   string `json:"key"`
+	Op    string `json:"op"` // "put", "delete" or "txn"
+	Key   string `json:"key,omitempty"`
 	Value []byte `json:"value,omitempty"`
 	TS    int64  `json:"ts"` // proposer's wall clock (unix nanos), for propagation timing
+	// txn: Ops (puts/deletes) apply together in one entry, or not at all
+	// if If is set and does not hold.
+	Ops []Command `json:"ops,omitempty"`
+	If  *Cond     `json:"if,omitempty"`
 }
+
+// Cond is a compare-and-set guard: Key's current version must equal
+// Version (0 = the key must not exist).
+type Cond struct {
+	Key     string `json:"key"`
+	Version uint64 `json:"version"`
+}
+
+// ErrCondFailed means a txn's guard did not hold; nothing was applied.
+var ErrCondFailed = errors.New("store: txn condition failed")
 
 // Encode serializes a command.
 func (c Command) Encode() []byte { b, _ := json.Marshal(c); return b }
@@ -61,35 +75,62 @@ func New() *FSM { return &FSM{KV: map[string]Item{}} }
 // still advances Applied, so every node stays in lockstep).
 var ErrBadCommand = errors.New("store: invalid command")
 
-// Apply applies one committed entry and returns the change, if any.
-func (f *FSM) Apply(e raft.Entry) (*Change, error) {
+func validOp(c Command) bool { return c.Key != "" && (c.Op == "put" || c.Op == "delete") }
+
+// Apply applies one committed entry and returns its changes (a txn may
+// change several keys; all share the entry's version).
+func (f *FSM) Apply(e raft.Entry) ([]Change, error) {
 	f.Applied = e.Index
 	if len(e.Data) == 0 {
 		return nil, nil // leader no-op
 	}
 	var c Command
-	if err := json.Unmarshal(e.Data, &c); err != nil || c.Key == "" || (c.Op != "put" && c.Op != "delete") {
+	if err := json.Unmarshal(e.Data, &c); err != nil {
 		return nil, ErrBadCommand
 	}
-	ch := Change{Version: e.Index, Key: c.Key, TS: c.TS}
-	switch c.Op {
-	case "put":
-		f.KV[c.Key] = Item{Value: c.Value, Version: e.Index}
-		ch.Value = c.Value
-	case "delete":
-		if _, ok := f.KV[c.Key]; !ok {
-			return nil, nil // nothing to delete: no change, no version bump
+	ops := []Command{c}
+	if c.Op == "txn" {
+		if len(c.Ops) == 0 {
+			return nil, ErrBadCommand
 		}
-		delete(f.KV, c.Key)
-		ch.Deleted = true
+		for _, o := range c.Ops {
+			if !validOp(o) {
+				return nil, ErrBadCommand
+			}
+		}
+		if c.If != nil && f.KV[c.If.Key].Version != c.If.Version {
+			return nil, ErrCondFailed
+		}
+		ops = c.Ops
+	} else if !validOp(c) {
+		return nil, ErrBadCommand
+	}
+	var out []Change
+	for _, o := range ops {
+		ch := Change{Version: e.Index, Key: o.Key, TS: c.TS}
+		switch o.Op {
+		case "put":
+			f.KV[o.Key] = Item{Value: o.Value, Version: e.Index}
+			ch.Value = o.Value
+		case "delete":
+			if _, ok := f.KV[o.Key]; !ok {
+				continue // nothing to delete: no change
+			}
+			delete(f.KV, o.Key)
+			ch.Deleted = true
+		}
+		out = append(out, ch)
+	}
+	if len(out) == 0 {
+		return nil, nil
 	}
 	f.Version = e.Index
-	f.History = append(f.History, ch)
+	f.History = append(f.History, out...)
 	if over := len(f.History) - HistoryLen; over > 0 {
 		f.Dropped = f.History[over-1].Version
 		f.History = append([]Change(nil), f.History[over:]...)
 	}
-	return &ch, nil
+	return out, nil
 }
 
 // Get returns the current value of key.

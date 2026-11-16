@@ -16,7 +16,8 @@ services:
     build: {context: .., args: {BIN: tollgate-control}}
     image: tollgate/tollgate-control:dev
     command: ["-id", "1", "-data", "/data", "-raft-listen", ":7100", "-api-listen", ":7200", "-admin-listen", ":7300",
-              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200"]
+              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200",
+              "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
     volumes: ["ctl-1-data:/data"]
     ports: ["7201:7200"]
 
@@ -24,7 +25,8 @@ services:
     build: {context: .., args: {BIN: tollgate-control}}
     image: tollgate/tollgate-control:dev
     command: ["-id", "2", "-data", "/data", "-raft-listen", ":7100", "-api-listen", ":7200", "-admin-listen", ":7300",
-              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200"]
+              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200",
+              "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
     volumes: ["ctl-2-data:/data"]
     ports: ["7202:7200"]
 
@@ -32,7 +34,8 @@ services:
     build: {context: .., args: {BIN: tollgate-control}}
     image: tollgate/tollgate-control:dev
     command: ["-id", "3", "-data", "/data", "-raft-listen", ":7100", "-api-listen", ":7200", "-admin-listen", ":7300",
-              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200"]
+              "-raft-peers", "1=ctl-1:7100,2=ctl-2:7100,3=ctl-3:7100", "-api-peers", "1=ctl-1:7200,2=ctl-2:7200,3=ctl-3:7200",
+              "-gateways", "gateway-1=http://gateway-1:9090,gateway-2=http://gateway-2:9090,gateway-3=http://gateway-3:9090"]
     volumes: ["ctl-3-data:/data"]
     ports: ["7203:7200"]
 
@@ -47,7 +50,7 @@ services:
   gateway-1:
     build: {context: .., args: {BIN: tollgate-gw}}
     image: tollgate/tollgate-gw:dev
-    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-1"]
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-1", "-node", "gateway-1"]
     volumes:
       - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
     ports: ["8080:8080", "9090:9090"]
@@ -56,7 +59,7 @@ services:
   gateway-2:
     build: {context: .., args: {BIN: tollgate-gw}}
     image: tollgate/tollgate-gw:dev
-    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-2"]
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-2", "-node", "gateway-2"]
     volumes:
       - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
     ports: ["8081:8080", "9091:9090"]
@@ -65,7 +68,7 @@ services:
   gateway-3:
     build: {context: .., args: {BIN: tollgate-gw}}
     image: tollgate/tollgate-gw:dev
-    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-3"]
+    command: ["-config", "/etc/tollgate/gateway.yaml", "-cluster-self", "gateway-3", "-node", "gateway-3"]
     volumes:
       - ./gateway.yaml:/etc/tollgate/gateway.yaml:ro
     ports: ["8082:8080", "9092:9090"]

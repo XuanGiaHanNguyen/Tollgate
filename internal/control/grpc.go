@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	tollgatev1 "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/rollout"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/store"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/raft"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/rules"
@@ -181,7 +182,38 @@ func (a *API) Put(ctx context.Context, req *tollgatev1.PutRequest) (*tollgatev1.
 			return nil, status.Error(codes.InvalidArgument, "rules rejected:\n"+err.Error())
 		}
 	}
+	if req.Key == rollout.KeyRollout {
+		return a.startRollout(ctx, req.Value)
+	}
 	v, err := a.S.Propose(ctx, store.Command{Op: "put", Key: req.Key, Value: req.Value})
+	return &tollgatev1.PutResponse{Version: v}, a.rpcErr(err)
+}
+
+// startRollout validates a rollout request {candidate, canary} and records
+// it as a new canary rollout. Only one rollout may be in progress.
+func (a *API) startRollout(ctx context.Context, body []byte) (*tollgatev1.PutResponse, error) {
+	req, err := rollout.Decode(body)
+	if err != nil || req.Canary == "" || len(req.Candidate) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "rollout needs {candidate, canary}")
+	}
+	if err := ValidateRules(req.Candidate); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "candidate rules rejected:\n"+err.Error())
+	}
+	cur, ok := a.S.LocalGet(rollout.KeyRollout)
+	var curVer uint64
+	if ok {
+		curVer = cur.Version
+		if r, err := rollout.Decode(cur.Value); err == nil && r.State == rollout.StateCanary {
+			return nil, status.Error(codes.FailedPrecondition, "rollout "+r.ID+" is still in progress")
+		}
+	}
+	rec := rollout.Record{ID: rollout.NewID(), State: rollout.StateCanary, Candidate: req.Candidate, Canary: req.Canary,
+		StartedTS: time.Now().UnixNano()}
+	v, err := a.S.Propose(ctx, store.Command{Op: "txn", If: &store.Cond{Key: rollout.KeyRollout, Version: curVer},
+		Ops: []store.Command{{Op: "put", Key: rollout.KeyRollout, Value: rec.Encode()}}})
+	if errors.Is(err, store.ErrCondFailed) {
+		return nil, status.Error(codes.Aborted, "another rollout started concurrently; retry")
+	}
 	return &tollgatev1.PutResponse{Version: v}, a.rpcErr(err)
 }
 

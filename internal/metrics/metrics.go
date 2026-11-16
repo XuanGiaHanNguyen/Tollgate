@@ -290,6 +290,7 @@ type Control struct {
 	term          prometheus.Gauge
 	isLeader      prometheus.Gauge
 	commitLatency prometheus.Observer
+	rollouts      *prometheus.CounterVec
 }
 
 // NewControl registers control-plane metrics for one node.
@@ -300,9 +301,11 @@ func NewControl(node string) *Control {
 	leader := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tollgate_raft_is_leader", Help: "1 if this node leads."}, []string{"node"})
 	lat := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tollgate_raft_commit_latency_seconds",
 		Help: "Write latency through consensus (propose to applied on the leader).", Buckets: latencyBuckets}, []string{"node"})
-	reg.MustRegister(term, leader, lat)
+	ro := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tollgate_rollout_decisions_total",
+		Help: "Canary rollout decisions made by this node while leader."}, []string{"outcome"})
+	reg.MustRegister(term, leader, lat, ro)
 	return &Control{Registry: reg, term: term.WithLabelValues(node), isLeader: leader.WithLabelValues(node),
-		commitLatency: lat.WithLabelValues(node)}
+		commitLatency: lat.WithLabelValues(node), rollouts: ro}
 }
 
 // Handler serves /metrics.
@@ -319,6 +322,9 @@ func (c *Control) Term(term uint64, leader bool) {
 		c.isLeader.Set(0)
 	}
 }
+
+// RolloutDecision counts one decision (promoted, rolled_back).
+func (c *Control) RolloutDecision(outcome string) { c.rollouts.WithLabelValues(outcome).Inc() }
 
 // CommitLatency records one write's latency.
 func (c *Control) CommitLatency(seconds float64) { c.commitLatency.Observe(seconds) }
