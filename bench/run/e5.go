@@ -46,7 +46,7 @@ func runE5() (*benchfmt.Result, error) {
 	res := newResult("E5", 3, map[string]any{
 		"nodes": 3, "tick": "50ms (election timeout 500-1000ms, pre-vote on)", "storage": "WAL with fsync (F_FULLFSYNC on macOS) on every Raft Ready",
 		"commit_latency": "client-side Put latency, sequential writes, leader stable, measured window after warm-up",
-		"failover":       fmt.Sprintf("%d SIGKILLs of the leader per run while a writer keeps writing; the killed node is restarted between kills", kills),
+		"failover":       fmt.Sprintf("%d SIGKILLs of the leader per run while a writer keeps writing (retrying every 5ms); 'first write' counts only writes started after the kill; the killed node is restarted between kills", kills),
 		"loss_check":     "every acknowledged write (unique key) read back linearizably at the end of the run",
 	})
 	res.Env.Topology = "local processes: 3 tollgate-control nodes"
@@ -76,6 +76,10 @@ func runE5() (*benchfmt.Result, error) {
 func e5Once(c *cluster, kills, rep int) (e5Run, error) {
 	cl := client.New(c.ctlEndpoints())
 	defer cl.Close()
+	// Retry every 5ms: failover is measured by the cluster, not by the
+	// client's backoff (the default 20ms..500ms schedule quantized an
+	// earlier run's results to ~500ms steps).
+	cl.SetMaxBackoff(5 * time.Millisecond)
 	var mu sync.Mutex
 	acked := map[string]bool{}
 	put := func(k string) (time.Duration, error) {
@@ -108,7 +112,8 @@ func e5Once(c *cluster, kills, rep int) (e5Run, error) {
 
 	// 2) Failovers under a continuous writer.
 	stop := make(chan struct{})
-	okAt := make(chan time.Time, 1<<16)
+	type okWrite struct{ start, end time.Time }
+	okAt := make(chan okWrite, 1<<16)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -119,9 +124,10 @@ func e5Once(c *cluster, kills, rep int) (e5Run, error) {
 				return
 			default:
 			}
+			began := time.Now()
 			if _, err := put(fmt.Sprintf("r%d-f%d", rep, i)); err == nil {
 				select {
-				case okAt <- time.Now():
+				case okAt <- okWrite{began, time.Now()}:
 				default:
 				}
 			}
@@ -150,11 +156,12 @@ func e5Once(c *cluster, kills, rep int) (e5Run, error) {
 		}
 		_ = nl
 		run.Elections = append(run.Elections, round(float64(time.Since(killed).Microseconds())/1000, 1))
-		// first write acknowledged after the kill
+		// First write that *started* after the kill and succeeded (a write
+		// committed by the old leader whose reply arrived late doesn't count).
 		for {
-			t := <-okAt
-			if t.After(killed) {
-				run.Failovers = append(run.Failovers, round(float64(t.Sub(killed).Microseconds())/1000, 1))
+			w := <-okAt
+			if w.start.After(killed) {
+				run.Failovers = append(run.Failovers, round(float64(w.end.Sub(killed).Microseconds())/1000, 1))
 				break
 			}
 		}

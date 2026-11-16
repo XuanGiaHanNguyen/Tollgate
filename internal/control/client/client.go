@@ -19,16 +19,22 @@ import (
 
 // Client is safe for concurrent use.
 type Client struct {
-	endpoints []string
-	mu        sync.Mutex
-	conns     map[string]*grpc.ClientConn
-	leader    string
+	endpoints  []string
+	mu         sync.Mutex
+	conns      map[string]*grpc.ClientConn
+	leader     string
+	maxBackoff time.Duration
 }
 
 // New creates a client for the given control-plane endpoints.
 func New(endpoints []string) *Client {
-	return &Client{endpoints: endpoints, conns: map[string]*grpc.ClientConn{}}
+	return &Client{endpoints: endpoints, conns: map[string]*grpc.ClientConn{}, maxBackoff: 500 * time.Millisecond}
 }
+
+// SetMaxBackoff caps the retry backoff between rounds (default 500ms).
+// Benchmarks that time failover use a tight cap so they measure the
+// cluster, not the client's retry schedule.
+func (c *Client) SetMaxBackoff(d time.Duration) { c.maxBackoff = d }
 
 // Close closes connections.
 func (c *Client) Close() {
@@ -87,7 +93,7 @@ func retryable(err error) bool {
 // leaderCall runs f against the leader, following redirects and retrying
 // through elections until ctx ends. f reports (notLeader, leaderAddr, err).
 func (c *Client) leaderCall(ctx context.Context, f func(ctx context.Context, s tollgatev1.ControlServiceClient) (bool, string, error)) error {
-	backoff := 20 * time.Millisecond
+	backoff := min(20*time.Millisecond, c.maxBackoff)
 	for {
 		var lastErr error
 		for _, addr := range c.order() {
@@ -125,7 +131,7 @@ func (c *Client) leaderCall(ctx context.Context, f func(ctx context.Context, s t
 			return errors.Join(ctx.Err(), lastErr)
 		case <-time.After(backoff):
 		}
-		backoff = min(backoff*2, 500*time.Millisecond)
+		backoff = min(backoff*2, c.maxBackoff)
 	}
 }
 
