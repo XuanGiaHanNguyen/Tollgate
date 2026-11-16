@@ -72,7 +72,7 @@ func main() {
 			dir = filepath.Join(os.TempDir(), "tollgate-quick-results")
 		}
 	}
-	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" && exp != "e4" && exp != "e10" { // pure Go, no binaries
+	if exp := strings.ToLower(flag.Arg(0)); exp != "e2" && exp != "e4" && exp != "e10" && exp != "sim" { // pure Go, no binaries
 		if err := build(); err != nil {
 			log.Fatalf("build: %v", err)
 		}
@@ -101,6 +101,8 @@ func main() {
 		res, err = runE9()
 	case "e10":
 		res, err = runE10()
+	case "sim":
+		res, err = runSim()
 	default:
 		flag.Usage()
 		os.Exit(2)

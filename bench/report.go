@@ -32,6 +32,7 @@ var experiments = []struct{ id, question string }{
 	{"E9", "Does hedging cut tail latency?"},
 	{"E10", "What does the safety filter cost?"},
 	{"E11", "Does safe rollout catch bad config?"},
+	{"SIM", "Does Raft stay safe under seeded faults? (deterministic simulation)"},
 }
 
 func main() {
@@ -91,6 +92,8 @@ func main() {
 				writeE9(&b, r)
 			case "E10":
 				writeE10(&b, r)
+			case "SIM":
+				writeSim(&b, r)
 			default:
 				b.WriteString("_No renderer for this experiment yet; see the raw result file._\n\n")
 			}
@@ -716,6 +719,37 @@ func writeE6(b *strings.Builder, r *benchfmt.Result) {
 	b.WriteString("Per run (all gateways p50 / p99 ms; timeouts):\n\n")
 	for i, run := range s.Runs {
 		fmt.Fprintf(b, "- run %d: %.2f / %.2f; %d\n", i+1, run.P50Ms, run.P99Ms, run.TimedOut)
+	}
+	b.WriteString("\n")
+}
+
+// ---- SIM ----
+
+func writeSim(b *strings.Builder, r *benchfmt.Result) {
+	var s struct {
+		Suites  []map[string]int `json:"suites"`
+		Seconds float64          `json:"seconds"`
+		Mutants []string         `json:"mutants"`
+		All     bool             `json:"all_mutants_caught"`
+	}
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: %v; faults: %v; invariants: %v.\n\n", r.Params["suites"], r.Params["faults"], r.Params["invariants"])
+	b.WriteString("| Suite | Seeds passed | Elections | Crashes | Partitions | Entries committed | Snapshots | Snapshot installs | Messages dropped |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	names := []string{"KV machine", "Config store"}
+	for i, su := range s.Suites {
+		n := fmt.Sprint(i)
+		if i < len(names) {
+			n = names[i]
+		}
+		fmt.Fprintf(b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d |\n", n, su["seeds"], su["elections"], su["crashes"], su["partitions"],
+			su["committed"], su["snapshots"], su["snapshot_installs"], su["dropped"])
+	}
+	fmt.Fprintf(b, "\nMutation check (%v) — all caught: **%v**\n\n", r.Params["mutants"], s.All)
+	for _, m := range s.Mutants {
+		b.WriteString("- " + m + "\n")
 	}
 	b.WriteString("\n")
 }
