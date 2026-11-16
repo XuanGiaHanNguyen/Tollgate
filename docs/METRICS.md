@@ -338,6 +338,45 @@ Method: a 1.048576e+06-byte corpus streamed in uniform random 1-64 bytes, like S
 
 Planted and split counts are summed over all runs. Throughput is measured in a separate pass without per-chunk timers.
 
+### E11: Does safe rollout catch bad config?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 00:52 → 00:54 (UTC) |
+| Commit | `c7ac7d81e8cb` |
+| Machine | Mac14,15, Apple M2, 8 CPUs, 16 GB |
+| OS / Go / k6 | darwin/arm64 / go1.27.4 / k6 v2.4.0 |
+| Topology | local processes: 3 tollgate-control + 3 tollgate-gw + 3 mockbackend; 3 gateway node(s) max |
+| Load average at start | 2.70 |
+| Power | battery |
+| Repetitions | 3 (median reported) |
+
+Method: 3 control nodes, 3 gateways, 300 req/s; window 10s; roll back if canary error rate > baseline + 5 pts or p99 > 1.5x baseline + 5ms; promote after a healthy window; min 100 requests per side. Scenarios: deny_30pct: candidate denies the 30% of requests with b=1; slow_50ms: candidate adds 50ms (X-Mock-Delay); good: harmless change; deny_30pct_leader_killed: control leader SIGKILLed 300ms into the canary, before any verdict is possible. Exposure: requests sent to the canary between rollout commit and decision, over all requests in that interval (round-robin over 3 gateways).
+
+| Scenario | Outcome | Commit → decision | Traffic on the candidate | Bad responses served | Decided by new leader | Canary healthy after |
+| --- | --- | --- | --- | --- | --- | --- |
+| deny_30pct | rolled_back | 1.57 s | 33.4% (155 requests) | 46 | — | true |
+| slow_50ms | rolled_back | 1.19 s | 32.2% (113 requests) | 113 | — | true |
+| good | promoted | 10.18 s | 33.3% (1014 requests) | 0 | — | true |
+| deny_30pct_leader_killed | rolled_back | 2.69 s | 33.3% (268 requests) | 79 | true | true |
+| deny_30pct | rolled_back | 1.38 s | 33.3% (138 requests) | 41 | — | true |
+| slow_50ms | rolled_back | 1.18 s | 32.5% (114 requests) | 113 | — | true |
+| good | promoted | 10.18 s | 33.3% (1015 requests) | 0 | — | true |
+| deny_30pct_leader_killed | rolled_back | 2.17 s | 33.3% (217 requests) | 65 | true | true |
+| deny_30pct | rolled_back | 1.36 s | 33.2% (135 requests) | 41 | — | true |
+| slow_50ms | rolled_back | 1.19 s | 32.4% (115 requests) | 115 | — | true |
+| good | promoted | 10.18 s | 33.3% (1012 requests) | 0 | — | true |
+| deny_30pct_leader_killed | rolled_back | 2.19 s | 33.4% (217 requests) | 64 | true | true |
+
+Reasons recorded in the Raft log:
+
+- deny_30pct: canary error rate 29.5% vs baseline 0.0% (allowed +5.0 pts)
+- slow_50ms: canary p99 101.5ms vs baseline 0.7ms (limit 6.1ms)
+- good: canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.8ms vs 0.7ms)
+- deny_30pct_leader_killed: canary error rate 30.4% vs baseline 0.0% (allowed +5.0 pts)
+
+Without a canary, a pushed config reaches 100% of traffic until a human reverts it; with it, the candidate served the canary's 1/3 share only until the automatic decision.
+
 ### SIM: Does Raft stay safe under seeded faults? (deterministic simulation)
 
 | Environment | |
@@ -372,4 +411,3 @@ _No results yet._
 
 ## Not yet measured
 
-- E11: Does safe rollout catch bad config?

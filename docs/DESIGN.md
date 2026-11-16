@@ -393,3 +393,24 @@ Measured: time from commit to automatic rollback, the share of all requests serv
 
 ### Simulation
 The deterministic simulator covers the replicated store (including `txn`), not the controller, which depends on wall time and scraped metrics. The controller's decision logic is unit-tested with fake metrics and clock; the full loop is tested against a real 3-node cluster.
+
+## M7: decisions log
+
+- **Decisions are guarded transactions.** Each decision is one Raft entry that (on promote) sets `rules` and writes the final `rollout` record and `rollouts/<id>`, applied only if `rollout` is still at the version the deciding leader read. A deposed leader's late decision is rejected (unit-tested); every node applies the same outcome.
+- **Promotion needs a fresh full window per leader**; the insufficient-traffic timeout counts from the rollout's start across failovers. A new leader cannot inherit the old leader's metric baselines, so it compares a new window. A breach still rolls back as soon as both sides have 100 requests.
+- **Errors include policy denials** (status ≥ 400). A rule that denies traffic it shouldn't is exactly the failure to catch; 429s count too, which is right for a canary comparison (the same traffic mix hits every gateway).
+- **Gateways always watch from version 0.** A canary restarted mid-rollout needs the current `rules` value to revert to; resuming after its cached version would have lost it (found while reviewing the code). Config is small, so a full replay is cheap. The cache now only bridges startup.
+- **The kill scenario first tested nothing.** The leader was killed 2 s into the canary, after it had already decided (in ~1.2 s). It is now killed 300 ms in, before any verdict is possible, and the result records that the decision came from the new leader.
+- **`X-Mock-Delay`** is a test-only `mockbackend` header so a rule can simulate a config that slows a path. It does nothing in the gateway itself.
+- **The simulator** covers the replicated store including guarded `txn`s under faults; the controller (wall clock, scraped metrics) is covered by unit tests with fake gateways and by E11 against a real cluster.
+
+## M7: measured results (laptop; full table in METRICS.md)
+
+- **E11** (3 control nodes, 3 gateways, 300 req/s, 10 s window, 3 runs × 4 scenarios, **all 12 correct**):
+  - deny 30%: rolled back in **1.36–1.57 s**;
+  - +50 ms: rolled back in **1.18–1.19 s**;
+  - healthy change: promoted after the window (10.18 s);
+  - deny 30% with the control leader SIGKILLed 300 ms in: rolled back in **2.17–2.69 s, decided by the new leader in all 3 runs**.
+
+  The canary served good rules afterwards in every case.
+- **Exposure is 1/N, not under it.** During the rollout the candidate served **33% of requests** (the canary's round-robin share), i.e. 41–48 bad responses for the deny config and 113–115 slow ones, versus 100% of traffic until a human reverts when pushing everywhere. The spec goal "under 1/N" is **not met**: with an equal-weight load balancer the canary always gets exactly 1/N. Getting below it needs the ALB or load balancer to weight the canary lower (e.g. 5%); recorded as a follow-up for M8, where the ALB sits in front of the gateways.
