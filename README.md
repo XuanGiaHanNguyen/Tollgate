@@ -8,7 +8,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 
 | Milestone | State |
 | --- | --- |
-| M1 Single-node gateway | in progress |
+| M1 Single-node gateway | done (compose run not yet verified) |
 | M2 Metrics and first numbers | not started |
 | M3 Rule language | not started |
 | M4 Distributed rate limiting | not started |
@@ -16,3 +16,19 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full build spec and [`docs/DESIGN.md`
 | M6 Raft control plane | not started |
 | M7 Safe rollout | not started |
 | M8 AWS and polish | not started |
+
+## Quick start
+
+```sh
+make build                     # bin/tollgate-gw, bin/mockbackend
+make race                      # unit tests with the race detector
+make chaos-kill-backend-local  # kill a backend under load (no Docker needed)
+
+make up                        # docker-compose: 1 gateway + 3 backends
+curl localhost:8080/hello      # proxied; X-Backend header shows which backend
+curl localhost:9090/admin/upstreams
+make chaos-kill-backend        # same kill check against compose
+make down
+```
+
+Gateway config is YAML (`deploy/gateway.yaml`); it is replaced by the rule language in M3 and by the control plane in M6.

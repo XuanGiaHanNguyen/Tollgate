@@ -1,0 +1,28 @@
+# M1 topology: 1 gateway + 3 mock backends.
+# Later milestones add control plane, more gateways, mockllm and observability.
+name: tollgate
+
+x-backend: &backend
+  build: {context: .., args: {BIN: mockbackend}}
+  image: tollgate/mockbackend:dev
+  command: ["-addr", ":9000"]
+  restart: "no"
+
+services:
+  gateway:
+    build: {context: .., args: {BIN: tollgate-gw}}
+    image: tollgate/tollgate-gw:dev
+    command: ["-config", "/etc/tollgate/gateway.yaml"]
+    volumes: ["./gateway.yaml:/etc/tollgate/gateway.yaml:ro"]
+    ports: ["8080:8080", "9090:9090"]
+    depends_on: [backend-1, backend-2, backend-3]
+
+  backend-1:
+    <<: *backend
+    command: ["-addr", ":9000", "-name", "backend-1"]
+  backend-2:
+    <<: *backend
+    command: ["-addr", ":9000", "-name", "backend-2"]
+  backend-3:
+    <<: *backend
+    command: ["-addr", ":9000", "-name", "backend-3"]
