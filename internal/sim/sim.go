@@ -136,7 +136,11 @@ func (s *Sim) start(n *node) {
 			panic(err)
 		}
 	}
-	n.r = raft.New(raft.Config{ID: n.id, Peers: s.peers(), ElectionTick: 10, HeartbeatTick: 1,
+	// Even seeds run the production config (PreVote on). Odd seeds turn it
+	// off: PreVote calms elections, which hides rare interleavings (a
+	// mutation run with PreVote everywhere missed Raft's Figure 8 bug in
+	// 3000 seeds).
+	n.r = raft.New(raft.Config{ID: n.id, Peers: s.peers(), ElectionTick: 10, HeartbeatTick: 1, PreVote: s.seed%2 == 0,
 		Rand: rand.New(rand.NewPCG(s.seed, n.id*7919+uint64(s.tick))), MaxAppend: 16},
 		raft.Restored{HardState: n.disk.hs, Snapshot: n.disk.snap, Entries: slices.Clone(n.disk.entries)})
 	n.applied = 0

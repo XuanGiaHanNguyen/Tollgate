@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
@@ -66,7 +67,11 @@ func NewGRPCTransport(self uint64, raftAddrs map[uint64]string) (*GRPCTransport,
 		if id == self {
 			continue
 		}
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// gRPC's default reconnect backoff grows to minutes; a restarted
+		// peer must hear heartbeats within an election timeout.
+		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithConnectParams(grpc.ConnectParams{MinConnectTimeout: time.Second,
+				Backoff: backoff.Config{BaseDelay: 50 * time.Millisecond, Multiplier: 1.6, Jitter: 0.2, MaxDelay: time.Second}}))
 		if err != nil {
 			t.Close()
 			return nil, err

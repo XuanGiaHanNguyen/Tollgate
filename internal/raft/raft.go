@@ -22,9 +22,12 @@ const (
 	Follower StateType = iota
 	Candidate
 	Leader
+	PreCandidate
 )
 
-func (s StateType) String() string { return [...]string{"follower", "candidate", "leader"}[s] }
+func (s StateType) String() string {
+	return [...]string{"follower", "candidate", "leader", "pre-candidate"}[s]
+}
 
 // MsgType identifies a message.
 type MsgType int
@@ -37,10 +40,12 @@ const (
 	MsgHeartbeat
 	MsgHeartbeatResp
 	MsgSnap
+	MsgPreVote
+	MsgPreVoteResp
 )
 
 func (t MsgType) String() string {
-	return [...]string{"Vote", "VoteResp", "App", "AppResp", "Heartbeat", "HeartbeatResp", "Snap"}[t]
+	return [...]string{"Vote", "VoteResp", "App", "AppResp", "Heartbeat", "HeartbeatResp", "Snap", "PreVote", "PreVoteResp"}[t]
 }
 
 // Entry is one log entry. Data == nil marks the leader's no-op.
@@ -111,6 +116,7 @@ type Config struct {
 	HeartbeatTick int
 	Rand          *rand.Rand // election jitter; seeded for determinism
 	MaxAppend     int        // entries per MsgApp
+	PreVote       bool       // pre-vote round before raising the term (Raft thesis §9.6)
 }
 
 // Restored is persisted state to restart from.
@@ -244,8 +250,13 @@ func (n *Node) appendFrom(es []Entry) {
 func (n *Node) quorum() int { return len(n.peers)/2 + 1 }
 
 // send queues a message stamped with this node's id and current term.
+// Pre-vote requests and granted pre-vote responses carry the proposed
+// next term instead (set by the caller), without changing anyone's term.
 func (n *Node) send(m Message) {
-	m.From, m.Term = n.id, n.term
+	m.From = n.id
+	if !((m.Type == MsgPreVote || m.Type == MsgPreVoteResp) && m.Term != 0) {
+		m.Term = n.term
+	}
 	n.msgs = append(n.msgs, m)
 }
 
@@ -302,12 +313,32 @@ func (n *Node) Tick() {
 	}
 }
 
+// campaign starts with a pre-vote round (Raft thesis §9.6): a node that
+// could not win (stale log) or whose peers still hear from a leader never
+// raises the term, so a restarted or partitioned node cannot depose a
+// healthy leader.
 func (n *Node) campaign() {
-	n.becomeCandidate()
 	if len(n.peers) == 1 {
+		n.becomeCandidate()
 		n.becomeLeader()
 		return
 	}
+	if !n.cfg.PreVote {
+		n.realCampaign()
+		return
+	}
+	n.state, n.lead = PreCandidate, 0
+	n.votes = map[uint64]bool{n.id: true}
+	n.resetTimers()
+	for _, p := range n.peers {
+		if p != n.id {
+			n.send(Message{Type: MsgPreVote, To: p, Term: n.term + 1, Index: n.lastIndex(), LogTerm: n.lastTerm()})
+		}
+	}
+}
+
+func (n *Node) realCampaign() {
+	n.becomeCandidate()
 	for _, p := range n.peers {
 		if p != n.id {
 			n.send(Message{Type: MsgVote, To: p, Index: n.lastIndex(), LogTerm: n.lastTerm()})
@@ -383,6 +414,8 @@ func (n *Node) maybeCommit() bool {
 // Step processes one message.
 func (n *Node) Step(m Message) {
 	switch {
+	case m.Type == MsgPreVote || (m.Type == MsgPreVoteResp && !m.Reject):
+		// Pre-votes never change anyone's term.
 	case m.Term > n.term:
 		lead := uint64(0)
 		if m.Type == MsgApp || m.Type == MsgHeartbeat || m.Type == MsgSnap {
@@ -401,6 +434,36 @@ func (n *Node) Step(m Message) {
 	}
 
 	switch m.Type {
+	case MsgPreVote:
+		// Grant only if the candidate's log is up to date and we have not
+		// heard from a leader within an election timeout.
+		upToDate := m.LogTerm > n.lastTerm() || (m.LogTerm == n.lastTerm() && m.Index >= n.lastIndex())
+		leaderAlive := n.state == Leader || (n.lead != 0 && n.electionElapsed < n.cfg.ElectionTick)
+		if m.Term > n.term && upToDate && !leaderAlive {
+			n.send(Message{Type: MsgPreVoteResp, To: m.From, Term: m.Term})
+		} else {
+			n.send(Message{Type: MsgPreVoteResp, To: m.From, Reject: true})
+		}
+
+	case MsgPreVoteResp:
+		if n.state != PreCandidate {
+			return
+		}
+		n.votes[m.From] = !m.Reject
+		granted, rejected := 0, 0
+		for _, v := range n.votes {
+			if v {
+				granted++
+			} else {
+				rejected++
+			}
+		}
+		if granted >= n.quorum() {
+			n.realCampaign()
+		} else if rejected >= n.quorum() {
+			n.becomeFollower(n.term, 0)
+		}
+
 	case MsgVote:
 		upToDate := m.LogTerm > n.lastTerm() || (m.LogTerm == n.lastTerm() && m.Index >= n.lastIndex())
 		grant := (n.vote == 0 || n.vote == m.From) && upToDate && n.state != Leader

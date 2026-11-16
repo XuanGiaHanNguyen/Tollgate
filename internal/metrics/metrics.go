@@ -273,3 +273,42 @@ func (r *RouteMetrics) ObserveRequest(status int, seconds float64) {
 
 // Retry records one retry.
 func (r *RouteMetrics) Retry() { r.retries.Inc() }
+
+// Control holds control-plane node metrics.
+type Control struct {
+	Registry      *prometheus.Registry
+	term          prometheus.Gauge
+	isLeader      prometheus.Gauge
+	commitLatency prometheus.Observer
+}
+
+// NewControl registers control-plane metrics for one node.
+func NewControl(node string) *Control {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	term := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tollgate_raft_term", Help: "Current Raft term."}, []string{"node"})
+	leader := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "tollgate_raft_is_leader", Help: "1 if this node leads."}, []string{"node"})
+	lat := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "tollgate_raft_commit_latency_seconds",
+		Help: "Write latency through consensus (propose to applied on the leader).", Buckets: latencyBuckets}, []string{"node"})
+	reg.MustRegister(term, leader, lat)
+	return &Control{Registry: reg, term: term.WithLabelValues(node), isLeader: leader.WithLabelValues(node),
+		commitLatency: lat.WithLabelValues(node)}
+}
+
+// Handler serves /metrics.
+func (c *Control) Handler() http.Handler {
+	return promhttp.HandlerFor(c.Registry, promhttp.HandlerOpts{Registry: c.Registry})
+}
+
+// Term records the term and leadership.
+func (c *Control) Term(term uint64, leader bool) {
+	c.term.Set(float64(term))
+	if leader {
+		c.isLeader.Set(1)
+	} else {
+		c.isLeader.Set(0)
+	}
+}
+
+// CommitLatency records one write's latency.
+func (c *Control) CommitLatency(seconds float64) { c.commitLatency.Observe(seconds) }

@@ -113,7 +113,7 @@ func NewServer(cfg Config, tr Transport) (*Server, error) {
 	s := &Server{cfg: cfg, log: cfg.Log, st: st, tr: tr, fsm: fsm, changed: make(chan struct{}),
 		recvc: make(chan raft.Message, 4096), propc: make(chan *proposal, 1024), readc: make(chan *readReq, 1024),
 		stopc: make(chan struct{}), waiting: map[uint64]*proposal{}, reads: map[string]*readReq{}}
-	s.node = raft.New(raft.Config{ID: cfg.ID, Peers: cfg.Peers, ElectionTick: 10, HeartbeatTick: 1}, restored)
+	s.node = raft.New(raft.Config{ID: cfg.ID, Peers: cfg.Peers, ElectionTick: 10, HeartbeatTick: 1, PreVote: true}, restored)
 	s.status = s.node.Status()
 	s.doneWG.Add(1)
 	go s.loop()
