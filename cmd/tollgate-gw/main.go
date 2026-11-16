@@ -21,6 +21,8 @@ import (
 
 	tollgatev1 "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/config"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/client"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/gwsync"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/proxy"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/ratelimit"
@@ -123,6 +125,35 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	if cfg.Control != nil {
+		cache := cfg.Control.CacheFile
+		if cache == "" {
+			cache = filepath.Join(filepath.Dir(cfgPath), "rules-cache.json")
+		}
+		apply := func(version uint64, commitTS int64, src []byte) error {
+			rs, err := rules.Compile(string(src), rules.Options{Budget: cfg.Rules.Budget})
+			if err != nil {
+				return err
+			}
+			if err := gw.CheckRules(rs); err != nil {
+				return err
+			}
+			gw.SetRulesAt(rs, version, commitTS)
+			log.Info("rules loaded from control plane", "version", version, "routes", len(rs.Routes))
+			return nil
+		}
+		from, ok := gwsync.LoadCache(cache, apply)
+		if ok {
+			log.Info("serving cached rules until the control plane answers", "version", from)
+		}
+		cc := client.New(cfg.Control.Endpoints)
+		defer cc.Close()
+		first := make(chan struct{})
+		go gwsync.Run(ctx, cc, cache, from, apply, log, first)
+		if err := gwsync.WaitFirst(ctx, first, log); err != nil {
+			return err
+		}
+	}
 	if cfg.Rules.File != "" {
 		path := cfg.Rules.File
 		if !filepath.IsAbs(path) {

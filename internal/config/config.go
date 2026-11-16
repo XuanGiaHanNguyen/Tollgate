@@ -27,6 +27,13 @@ type Config struct {
 	Auth            Auth          `yaml:"auth"`
 	Cluster         *Cluster      `yaml:"cluster"` // nil: single-node limiting
 	AI              AI            `yaml:"ai"`
+	Control         *Control      `yaml:"control"` // rules from the control plane instead of rules.file
+}
+
+// Control points a gateway at the control plane (M6).
+type Control struct {
+	Endpoints []string `yaml:"endpoints"`  // client API addresses
+	CacheFile string   `yaml:"cache_file"` // last accepted rules, for restarts while the control plane is down
 }
 
 // AI configures model routes (M5).
@@ -315,6 +322,14 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Routes) == 0 {
 		add("at least one route is required")
+	}
+	if c.Control != nil {
+		if len(c.Control.Endpoints) == 0 {
+			add("control.endpoints is required")
+		}
+		if c.Rules.File != "" {
+			add("set either rules.file or control, not both")
+		}
 	}
 	if c.Rules.Engine != "vm" && c.Rules.Engine != "interp" {
 		add("rules.engine must be vm or interp, got %q", c.Rules.Engine)

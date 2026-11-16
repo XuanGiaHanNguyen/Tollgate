@@ -42,6 +42,7 @@ type Gateway struct {
 	hedges       *prometheus.CounterVec
 	filterHits   *prometheus.CounterVec
 	holdback     *prometheus.HistogramVec
+	propagation  prometheus.Observer
 }
 
 // Policy outcomes for tollgate_policy_decisions_total.
@@ -145,6 +146,12 @@ func NewGateway(node string) *Gateway {
 	reg.MustRegister(g.requests, g.duration, overhead, g.retries, g.breakerState, g.backendHealth, configVersion, ruleEval, policy,
 		rl, g.peerRPC, g.batchSize, g.costReserved, g.costSettled, g.costErr, expired, g.ttft, g.hedges, g.filterHits, g.holdback)
 	g.resvExpired = expired.WithLabelValues(node)
+	prop := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "tollgate_config_propagation_seconds", Help: "Commit on the control-plane leader to active on this gateway.",
+		Buckets: latencyBuckets,
+	}, []string{"node"})
+	reg.MustRegister(prop)
+	g.propagation = prop.WithLabelValues(node)
 	g.rlDecisions = map[string]prometheus.Counter{}
 	for _, r := range []string{"allow", "deny", "degraded"} {
 		g.rlDecisions[r] = rl.WithLabelValues(r, node)
@@ -227,6 +234,9 @@ func (g *Gateway) CostSettled(model string, estimate, actual int64) {
 		g.costErr.WithLabelValues(model).Observe(float64(estimate-actual) / float64(actual))
 	}
 }
+
+// ConfigPropagation records commit-to-active time for one config version.
+func (g *Gateway) ConfigPropagation(seconds float64) { g.propagation.Observe(seconds) }
 
 // ReservationExpired counts a hold released at its deadline.
 func (g *Gateway) ReservationExpired() { g.resvExpired.Inc() }

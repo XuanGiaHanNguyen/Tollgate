@@ -47,6 +47,19 @@ func (g *Gateway) SetRules(rs *rules.RuleSet) uint64 {
 	return v
 }
 
+// SetRulesAt installs rules at a control-plane version. commitTS (unix
+// nanos, 0 if unknown) times propagation from the leader's commit.
+func (g *Gateway) SetRulesAt(rs *rules.RuleSet, version uint64, commitTS int64) {
+	g.policy.rules.Store(rs)
+	g.policy.version.Store(version)
+	if g.metrics != nil {
+		g.metrics.SetConfigVersion(version)
+		if commitTS > 0 {
+			g.metrics.ConfigPropagation(time.Since(time.Unix(0, commitTS)).Seconds())
+		}
+	}
+}
+
 // RulesVersion reports the active rule version (0 = none loaded).
 func (g *Gateway) RulesVersion() uint64 { return g.policy.version.Load() }
 

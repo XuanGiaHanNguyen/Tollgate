@@ -1,5 +1,5 @@
 COMPOSE := docker compose -f deploy/docker-compose.yml
-BINS := tollgate-gw mockbackend mockllm
+BINS := tollgate-gw mockbackend mockllm tollgate-control tollgatectl
 
 .PHONY: build test race vet fmt-check up down logs chaos-kill-backend chaos-kill-backend-local bench-e1 bench-e2 bench-e7 report fuzz-smoke
 
