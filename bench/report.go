@@ -73,6 +73,8 @@ func main() {
 			switch e.id {
 			case "E1":
 				writeE1(&b, r)
+			case "E2":
+				writeE2(&b, r)
 			case "E7":
 				writeE7(&b, r)
 			default:
@@ -113,7 +115,11 @@ func writeEnv(b *strings.Builder, r *benchfmt.Result) {
 		{"Topology", fmt.Sprintf("%s; %d gateway node(s) max", e.Topology, e.NodeCount)},
 		{"Load average at start", orDash(e.LoadAvg1m)},
 		{"Power", orDash(e.Power)},
-		{"Measured window × reps", fmt.Sprintf("%vs after %vs warm-up × %v (median reported)", r.Params["measure_seconds"], r.Params["warmup_seconds"], r.Params["reps"])},
+	}
+	if _, ok := r.Params["measure_seconds"]; ok {
+		rows = append(rows, [2]string{"Measured window × reps", fmt.Sprintf("%vs after %vs warm-up × %v (median reported)", r.Params["measure_seconds"], r.Params["warmup_seconds"], r.Params["reps"])})
+	} else {
+		rows = append(rows, [2]string{"Repetitions", fmt.Sprintf("%v (median reported)", r.Params["reps"])})
 	}
 	if e.Note != "" {
 		rows = append(rows, [2]string{"Note", e.Note})
@@ -294,4 +300,42 @@ func msOrNever(v float64) string {
 		return "never"
 	}
 	return fmt.Sprintf("%.0f ms", v)
+}
+
+// ---- E2 ----
+
+type e2Summary struct {
+	EnginesAgree bool `json:"engines_agree"`
+	Sizes        []struct {
+		Name   string  `json:"name"`
+		Stmts  int     `json:"stmts"`
+		Instrs float64 `json:"bytecode_instrs"`
+		VM     struct {
+			Ns     float64 `json:"ns_per_op"`
+			Bytes  float64 `json:"bytes_per_op"`
+			Allocs float64 `json:"allocs_per_op"`
+		} `json:"vm"`
+		Interp struct {
+			Ns     float64 `json:"ns_per_op"`
+			Bytes  float64 `json:"bytes_per_op"`
+			Allocs float64 `json:"allocs_per_op"`
+		} `json:"interp"`
+		Speedup float64 `json:"speedup"`
+	} `json:"sizes"`
+}
+
+func writeE2(b *strings.Builder, r *benchfmt.Result) {
+	var s e2Summary
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: `%v`; rule sets with %v. Both engines run the same optimized AST; %v.\n\n", r.Params["benchmark"], r.Params["sizes"], r.Params["gate"])
+	fmt.Fprintf(b, "Engines agree (differential gate passed): **%v**\n\n", s.EnginesAgree)
+	b.WriteString("| Rule set | Statements | Bytecode instrs | VM ns/eval | VM allocs/eval | Interpreter ns/eval | Interpreter allocs/eval | Speedup (interp ÷ VM) |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, z := range s.Sizes {
+		fmt.Fprintf(b, "| %s | %d | %.0f | %.1f | %.0f | %.1f | %.0f | %.2f× |\n",
+			z.Name, z.Stmts, z.Instrs, z.VM.Ns, z.VM.Allocs, z.Interp.Ns, z.Interp.Allocs, z.Speedup)
+	}
+	b.WriteString("\n")
 }

@@ -35,6 +35,17 @@ jobs:
       - name: build binaries
         run: make build
 
+  fuzz:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: fuzz smoke (30s per target)
+        run: make fuzz-smoke FUZZ_TIME=30s
+
   images:
     runs-on: ubuntu-latest
     needs: test

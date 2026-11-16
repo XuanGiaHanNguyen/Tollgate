@@ -24,3 +24,10 @@ routes:
     upstream: api
     timeouts: {connect: 1s, header: 5s, total: 10s}
     retry: {attempts: 2, base_backoff: 5ms, max_backoff: 50ms}
+rules:
+  file: rules.tg
+  reload_interval: 1s
+auth:
+  api_keys:
+    - {key: demo-free-key, user_id: alice, tier: free}
+    - {key: demo-pro-key, user_id: bob, tier: pro}

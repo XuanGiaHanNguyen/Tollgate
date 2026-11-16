@@ -1,0 +1,18 @@
+(route "/a"
+  (deny 404)
+)
+(route "/b"
+  (limit#0 10 per minute by user.id)
+)
+(route "/c"
+  (deny 403)
+)
+1:5: error: parser: expected identifier after 'let', found '='
+3:9: error: parser: expected request count after 'limit', found 'per'
+4:8: error: parser: expected HTTP status after 'deny', found string "403"
+5:11: error: parser: expected 'auth' after 'require', found identifier "admin"
+6:8: error: parser: expected an expression, found '{'
+7:16: error: parser: unknown time unit "fortnight" (want second, minute, hour or day)
+9:3: error: parser: expected an expression, found 'deny'
+13:1: error: parser: expected a statement, found identifier "banana"
+14:1: error: parser: missing '}' for block opened at 11:1

@@ -1,0 +1,27 @@
+let t = user.tier
+let t = "dup"
+let header = 1
+let n = 5
+route "/a" {
+  when user.tier { deny 403 }
+  when n + "x" == 1 { deny 403 }
+  when !n { deny 403 }
+  when -t == 1 { deny 403 }
+  when user.tier < "z" { deny 403 }
+  when missing == 1 { deny 403 }
+  when user.nope == "" { deny 403 }
+  when header(1) == "" { deny 403 }
+  when header("a", "b") == "" { deny 403 }
+  when nosuch("a") { deny 403 }
+  when cidr_match(client.ip) { deny 403 }
+  when user.tier == 5 { deny 403 }
+  limit 0 per minute by user.id
+  limit 10 per minute by n
+  deny 200
+  set_header "Bad Header" "v"
+  set_header "X-Ok" n
+}
+route "/b" {
+  when later == 1 { deny 403 }
+}
+let later = 1

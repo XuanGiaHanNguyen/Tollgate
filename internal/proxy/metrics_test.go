@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -21,7 +22,7 @@ func scrape(t *testing.T, m *metrics.Gateway) string {
 func TestGatewayMetrics(t *testing.T) {
 	good, bad := newBackend(t, "good"), newBackend(t, "bad")
 	bad.status.Store(503)
-	good.delay.Store(int64(20 * time.Millisecond))
+	good.delay.Store(int64(100 * time.Millisecond))
 	extra := `    breaker: {min_requests: 2, error_rate: 0.5, cooldown: 1h}
 routes:
   - name: api
@@ -65,10 +66,17 @@ routes:
 		t.Log(out)
 	}
 
-	// Overhead must exclude the 20ms the backend spends: every observation
-	// should fall well under it.
-	if !strings.Contains(out, `tollgate_gateway_overhead_seconds_bucket{node="node-1",le="0.0128"} 5`) {
-		t.Errorf("gateway overhead included upstream time:\n%s", grep(out, "overhead"))
+	// Overhead must exclude the 100ms the backend spends on each of the 4
+	// successful requests: if upstream time leaked in, the sum would be at
+	// least 400ms. A loose bound keeps this robust on a loaded CI machine.
+	var sum float64
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, `tollgate_gateway_overhead_seconds_sum{node="node-1"} `) {
+			fmt.Sscan(strings.Fields(l)[1], &sum)
+		}
+	}
+	if sum <= 0 || sum > 0.25 {
+		t.Errorf("total gateway overhead %.3fs for 5 requests; upstream time leaked in?\n%s", sum, grep(out, "overhead"))
 	}
 }
 

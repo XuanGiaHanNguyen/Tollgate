@@ -1,0 +1,21 @@
+let free_tier = user.tier == "free"
+
+route "/api/ai/*" {
+  require auth
+  when free_tier { deny 402 }
+  when user.tier == "free" { limit 10 per minute by user.id }
+  when free_tier && header("X-Beta") == "1" { set_header "X-Beta" "yes" }
+  when user.tier == "pro" { limit 200 per minute by user.id }
+}
+
+route "/api/debug/*" {
+  deny 403
+  limit 1 per second by client.ip
+}
+
+route "/api/nested/*" {
+  when user.tier == "free" {
+    when header("X-A") == "1" { deny 403 }
+    when header("X-A") == "1" { set_header "X-B" "2" }
+  }
+}
