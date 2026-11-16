@@ -92,6 +92,8 @@ func main() {
 				writeE9(&b, r)
 			case "E10":
 				writeE10(&b, r)
+			case "E11":
+				writeE11(&b, r)
 			case "SIM":
 				writeSim(&b, r)
 			default:
@@ -752,4 +754,47 @@ func writeSim(b *strings.Builder, r *benchfmt.Result) {
 		b.WriteString("- " + m + "\n")
 	}
 	b.WriteString("\n")
+}
+
+// ---- E11 ----
+
+func writeE11(b *strings.Builder, r *benchfmt.Result) {
+	var s struct {
+		Cases []struct {
+			Scenario       string  `json:"scenario"`
+			Outcome        string  `json:"outcome"`
+			Reason         string  `json:"reason"`
+			DecisionMs     float64 `json:"commit_to_decision_ms"`
+			ExposedPct     float64 `json:"exposed_pct"`
+			ExposedReqs    int64   `json:"exposed_requests"`
+			BadResponses   int64   `json:"bad_responses"`
+			LeaderKilled   bool    `json:"leader_killed"`
+			DecidedAfter   bool    `json:"decided_after_kill"`
+			CanaryReverted bool    `json:"canary_reverted_or_promoted"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(r.Summary, &s); err != nil {
+		fmt.Fprintf(b, "_Unreadable summary: %v_\n\n", err)
+		return
+	}
+	fmt.Fprintf(b, "Method: %v control nodes, %v gateways, %v req/s; window %v; %v. Scenarios: %v. Exposure: %v.\n\n",
+		r.Params["control_nodes"], r.Params["gateways"], r.Params["rate"], r.Params["window"], r.Params["policy"], r.Params["scenarios"], r.Params["exposure"])
+	b.WriteString("| Scenario | Outcome | Commit → decision | Traffic on the candidate | Bad responses served | Decided by new leader | Canary healthy after |\n| --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, c := range s.Cases {
+		after := "—"
+		if c.LeaderKilled {
+			after = fmt.Sprint(c.DecidedAfter)
+		}
+		fmt.Fprintf(b, "| %s | %s | %.2f s | %.1f%% (%d requests) | %d | %s | %v |\n",
+			c.Scenario, c.Outcome, c.DecisionMs/1000, c.ExposedPct, c.ExposedReqs, c.BadResponses, after, c.CanaryReverted)
+	}
+	b.WriteString("\nReasons recorded in the Raft log:\n\n")
+	seen := map[string]bool{}
+	for _, c := range s.Cases {
+		if !seen[c.Scenario] {
+			seen[c.Scenario] = true
+			fmt.Fprintf(b, "- %s: %s\n", c.Scenario, c.Reason)
+		}
+	}
+	b.WriteString("\nWithout a canary, a pushed config reaches 100% of traffic until a human reverts it; with it, the candidate served the canary's 1/3 share only until the automatic decision.\n\n")
 }

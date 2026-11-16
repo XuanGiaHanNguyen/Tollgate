@@ -48,7 +48,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e3|e4|e7|e8|e9|e10")
+		fmt.Fprintln(os.Stderr, "usage: go run ./bench/run [flags] e1|e2|e3|e4|e5|e6|e7|e8|e9|e10|e11|sim")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -101,6 +101,8 @@ func main() {
 		res, err = runE9()
 	case "e10":
 		res, err = runE10()
+	case "e11":
+		res, err = runE11()
 	case "sim":
 		res, err = runSim()
 	default:
@@ -168,7 +170,7 @@ type ctlNode struct {
 }
 
 // startControl launches n control-plane nodes and waits for a leader.
-func (c *cluster) startControl(n int) error {
+func (c *cluster) startControl(n int, extra []string) error {
 	var rp, ap []string
 	for i := 1; i <= n; i++ {
 		rp = append(rp, fmt.Sprintf("%d=127.0.0.1:%d", i, 7100+i))
@@ -179,6 +181,7 @@ func (c *cluster) startControl(n int) error {
 			args: []string{"-id", fmt.Sprint(i), "-data", filepath.Join(c.dir, fmt.Sprintf("ctl-%d", i)),
 				"-raft-listen", fmt.Sprintf("127.0.0.1:%d", 7100+i), "-api-listen", fmt.Sprintf("127.0.0.1:%d", 7200+i),
 				"-admin-listen", fmt.Sprintf("127.0.0.1:%d", 7300+i), "-raft-peers", strings.Join(rp, ","), "-api-peers", strings.Join(ap, ",")}}
+		nd.args = append(nd.args, extra...)
 		c.ctl = append(c.ctl, nd)
 		if err := c.startCtl(nd); err != nil {
 			return err
@@ -243,6 +246,7 @@ type clusterSpec struct {
 	llms          []llmSpec // mock LLM providers, as upstreams provider-a, provider-b, ...
 	aiYAML        string    // top-level ai: block
 	control       int       // control-plane nodes; gateways then take rules from them
+	controlArgs   []string  // extra tollgate-control flags (rollout policy)
 }
 
 // llmSpec is one mockllm process; it becomes upstream "provider-<letter>".
@@ -283,7 +287,7 @@ func startCluster(spec clusterSpec) (*cluster, error) {
 		aiRoute = "  - {name: ai, type: ai, prefix: /v1/, upstream: provider-a, timeouts: {connect: 1s, header: 30s, total: 120s}}\n"
 	}
 	if spec.control > 0 {
-		if err := c.startControl(spec.control); err != nil {
+		if err := c.startControl(spec.control, spec.controlArgs); err != nil {
 			c.stop()
 			return nil, err
 		}

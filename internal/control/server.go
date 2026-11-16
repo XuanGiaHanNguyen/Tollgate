@@ -351,6 +351,21 @@ func (s *Server) LinearizableGet(ctx context.Context, key string) (store.Item, b
 	}
 }
 
+// IsLeader reports whether this node currently leads.
+func (s *Server) IsLeader() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.status.State == raft.Leader
+}
+
+// LocalGet reads this node's applied state (not linearizable; the rollout
+// controller guards its writes with a compare-and-set instead).
+func (s *Server) LocalGet(key string) (store.Item, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fsm.Get(key)
+}
+
 // Status reports the node's Raft state and store version.
 func (s *Server) Status() (raft.Status, uint64) {
 	s.mu.RLock()

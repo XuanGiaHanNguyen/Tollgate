@@ -149,7 +149,7 @@ func run(cfgPath, node, clusterSelf string, log *slog.Logger) error {
 		cc := client.New(cfg.Control.Endpoints)
 		defer cc.Close()
 		first := make(chan struct{})
-		go gwsync.Run(ctx, cc, cache, from, apply, log, first)
+		go gwsync.Run(ctx, cc, cache, ok, node, apply, log, first)
 		if err := gwsync.WaitFirst(ctx, first, log); err != nil {
 			return err
 		}

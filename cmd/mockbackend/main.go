@@ -69,6 +69,11 @@ func (s *server) handle(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cur.Load()
 	s.requests.Add(1)
 	d := cfg.Latency
+	// Test hook: extra latency requested per request (a gateway rule can
+	// set this header to simulate a bad config that slows a path down).
+	if extra, err := time.ParseDuration(r.Header.Get("X-Mock-Delay")); err == nil && extra > 0 && extra < 10*time.Second {
+		d += extra
+	}
 	if cfg.Jitter > 0 {
 		d += time.Duration(rand.Int64N(int64(cfg.Jitter) + 1))
 	}

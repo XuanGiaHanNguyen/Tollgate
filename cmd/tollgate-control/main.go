@@ -22,6 +22,7 @@ import (
 
 	tollgatev1 "github.com/XuanGiaHanNguyen/Tollgate/api/gen/tollgate/v1"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/control"
+	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/rollout"
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/metrics"
 )
 
@@ -48,16 +49,35 @@ func main() {
 	raftPeers := flag.String("raft-peers", "", "all members' Raft addresses: 1=host:7100,2=...,3=...")
 	apiPeers := flag.String("api-peers", "", "all members' client API addresses (for leader redirects)")
 	tick := flag.Duration("tick", 50*time.Millisecond, "Raft tick; election timeout is 10-20 ticks")
+	gateways := flag.String("gateways", "", "gateway admin URLs for canary comparison: gw-1=http://host:9090,...")
+	pol := rollout.DefaultPolicy()
+	flag.DurationVar(&pol.Window, "rollout-window", pol.Window, "healthy canary time before promotion")
+	flag.DurationVar(&pol.MaxWait, "rollout-max-wait", pol.MaxWait, "roll back if the canary lacks traffic by then")
+	flag.Float64Var(&pol.MinRequests, "rollout-min-requests", pol.MinRequests, "requests needed on each side before a verdict")
+	flag.Float64Var(&pol.MaxErrDelta, "rollout-max-error-delta", pol.MaxErrDelta, "allowed canary error-rate excess (0.05 = 5 points)")
+	flag.Float64Var(&pol.MaxP99Ratio, "rollout-max-p99-ratio", pol.MaxP99Ratio, "allowed canary p99 / baseline p99")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	if err := run(*id, *dataDir, *raftListen, *apiListen, *adminListen, *raftPeers, *apiPeers, *tick, log); err != nil {
+	gws := map[string]string{}
+	if *gateways != "" {
+		for _, part := range strings.Split(*gateways, ",") {
+			name, url, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if !ok {
+				log.Error("bad -gateways entry", "entry", part)
+				os.Exit(2)
+			}
+			gws[name] = url
+		}
+	}
+	if err := run(*id, *dataDir, *raftListen, *apiListen, *adminListen, *raftPeers, *apiPeers, *tick, gws, pol, log); err != nil {
 		log.Error("exit", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(id uint64, dataDir, raftListen, apiListen, adminListen, raftPeers, apiPeers string, tick time.Duration, log *slog.Logger) error {
+func run(id uint64, dataDir, raftListen, apiListen, adminListen, raftPeers, apiPeers string, tick time.Duration,
+	gateways map[string]string, pol rollout.Policy, log *slog.Logger) error {
 	if id == 0 || dataDir == "" {
 		return fmt.Errorf("-id and -data are required")
 	}
@@ -119,6 +139,11 @@ func run(id uint64, dataDir, raftListen, apiListen, adminListen, raftPeers, apiP
 	log.Info("tollgate-control started", "id", id, "raft", raftListen, "api", apiListen, "admin", adminListen, "members", len(peers))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if len(gateways) > 0 {
+		ctl := &rollout.Controller{Store: srv, Gateways: gateways, Policy: pol, Log: log, OnDecision: m.RolloutDecision}
+		go ctl.Run(ctx)
+		log.Info("rollout controller enabled", "gateways", len(gateways), "window", pol.Window.String())
+	}
 	<-ctx.Done()
 	log.Info("shutting down")
 	apiGS.GracefulStop()

@@ -18,8 +18,18 @@ import (
 	"github.com/XuanGiaHanNguyen/Tollgate/internal/control/client"
 )
 
-// RulesKey is the control-plane key holding rule source.
-const RulesKey = "rules"
+// Control-plane keys a gateway follows.
+const (
+	RulesKey   = "rules"
+	RolloutKey = "rollout"
+)
+
+type rolloutRecord struct {
+	ID        string `json:"id"`
+	State     string `json:"state"`
+	Candidate []byte `json:"candidate"`
+	Canary    string `json:"canary"`
+}
 
 // Apply installs rules at a control-plane version. commitTS is the
 // leader's commit wall clock (unix nanos; 0 if unknown, e.g. from cache).
@@ -53,10 +63,13 @@ func saveCache(path string, version uint64, src []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// Run watches until ctx ends. from is the version already applied (from
-// the cache), so the watch resumes after it. first is closed after the
-// first rules are applied from the control plane (or immediately if from>0).
-func Run(ctx context.Context, c *client.Client, cachePath string, from uint64, apply Apply, log *slog.Logger, first chan<- struct{}) error {
+// Run watches until ctx ends, always from version 0: the gateway needs the
+// current value of both keys (a canary restarted mid-rollout must still be
+// able to revert), and config is small. cached reports that rules were
+// already served from the cache, so first is closed at once; otherwise
+// first is closed after the first rules are applied. self is this
+// gateway's name: while a canary rollout names it, it runs the candidate.
+func Run(ctx context.Context, c *client.Client, cachePath string, cached bool, self string, apply Apply, log *slog.Logger, first chan<- struct{}) error {
 	if cachePath != "" {
 		os.MkdirAll(filepath.Dir(cachePath), 0o755)
 	}
@@ -67,36 +80,62 @@ func Run(ctx context.Context, c *client.Client, cachePath string, from uint64, a
 			signaled = true
 		}
 	}
-	if from > 0 {
+	if cached {
 		signal()
 	}
 	// Changes committed before the watch started are catch-up, not
 	// propagation: don't let them time from their original commit.
 	started := time.Now().UnixNano()
-	err := c.Watch(ctx, from, func(r *tollgatev1.WatchResponse) {
+	var active []byte    // current "rules" value
+	var ro rolloutRecord // current rollout record
+	var appliedSrc []byte
+	appliedSet := false
+	err := c.Watch(ctx, 0, func(r *tollgatev1.WatchResponse) {
+		var ver uint64
+		var ts int64
+		touched := false
 		for _, ch := range r.Changes {
-			if ch.Key != RulesKey {
-				continue
-			}
-			if ch.Deleted {
-				log.Warn("rules deleted on the control plane; keeping the last good version", "version", ch.Version)
-				continue
-			}
-			ts := ch.CommitTsUnixNano
-			if ts < started {
-				ts = 0
-			}
-			if err := apply(ch.Version, ts, ch.Value); err != nil {
-				log.Error("rules from control plane rejected; keeping the last good version", "version", ch.Version, "err", err.Error())
-				continue
-			}
-			if cachePath != "" {
-				if err := saveCache(cachePath, ch.Version, ch.Value); err != nil {
-					log.Warn("could not cache rules", "err", err.Error())
+			switch ch.Key {
+			case RulesKey:
+				if ch.Deleted {
+					log.Warn("rules deleted on the control plane; keeping the last good version", "version", ch.Version)
+					continue
 				}
+				active = ch.Value
+			case RolloutKey:
+				ro = rolloutRecord{}
+				if !ch.Deleted {
+					json.Unmarshal(ch.Value, &ro)
+				}
+			default:
+				continue
 			}
-			signal()
+			touched, ver, ts = true, ch.Version, ch.CommitTsUnixNano
 		}
+		if !touched {
+			return
+		}
+		desired := active
+		if ro.State == "canary" && ro.Canary == self && self != "" {
+			desired = ro.Candidate // this gateway is the canary
+		}
+		if desired == nil || (appliedSet && string(desired) == string(appliedSrc)) {
+			return
+		}
+		if ts < started {
+			ts = 0
+		}
+		if err := apply(ver, ts, desired); err != nil {
+			log.Error("rules from control plane rejected; keeping the last good version", "version", ver, "err", err.Error())
+			return
+		}
+		appliedSrc, appliedSet = desired, true
+		if cachePath != "" {
+			if err := saveCache(cachePath, ver, desired); err != nil {
+				log.Warn("could not cache rules", "err", err.Error())
+			}
+		}
+		signal()
 	})
 	if errors.Is(err, context.Canceled) {
 		return nil
