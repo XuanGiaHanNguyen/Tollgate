@@ -96,6 +96,16 @@ func CaptureEnv() Env {
 				}
 			}
 		}
+		if b, err := os.ReadFile("/proc/meminfo"); err == nil {
+			for _, l := range strings.Split(string(b), "\n") {
+				if f := strings.Fields(l); len(f) >= 2 && f[0] == "MemTotal:" {
+					var kb float64
+					_ = json.Unmarshal([]byte(f[1]), &kb)
+					e.MemoryGB = kb / (1 << 20)
+					break
+				}
+			}
+		}
 	}
 	return e
 }

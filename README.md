@@ -53,18 +53,18 @@ flowchart LR
 
 | | Question | Laptop (Apple M2, shared) | CI runner (clean Linux VM) |
 | --- | --- | --- | --- |
-| E1 | How fast is the gateway? | 1 gw: 15000 req/s, 3 gw: 15000 req/s at p99 < 10 ms | — |
-| E2 | Does bytecode beat tree-walking? | VM 2.56× the interpreter on 1000 rules; 0 allocs | — |
-| E3 | How accurate is distributed limiting? | over-admission +0.07% across 3 gateways (batched, 0.35 RPCs/req) | — |
-| E4 | Does consistent hashing minimize movement? | 23.5% of keys moved (ideal 25%), 0 misplaced; max/mean load 1.08 | — |
-| E5 | How does Raft behave? | commit p50 13.5 / p99 25.2 ms; failover p50 643 ms; 0 of 17842 writes lost | — |
-| E6 | How fast does config reach gateways? | config on all gateways p50 4.8 / p99 16.1 ms after commit | — |
-| E7 | Does the breaker protect latency? | client errors 16.7% → 1.4% with the breaker | — |
+| E1 | How fast is the gateway? | 1 gw: 15000 req/s, 3 gw: 15000 req/s at p99 < 10 ms | 1 gw: 7500 req/s, 3 gw: 7500 req/s at p99 < 10 ms |
+| E2 | Does bytecode beat tree-walking? | VM 2.56× the interpreter on 1000 rules; 0 allocs | VM 3.36× the interpreter on 1000 rules; 0 allocs |
+| E3 | How accurate is distributed limiting? | over-admission +0.07% across 3 gateways (batched, 0.35 RPCs/req) | over-admission +0.00% across 3 gateways (batched, 0.25 RPCs/req) |
+| E4 | Does consistent hashing minimize movement? | 23.5% of keys moved (ideal 25%), 0 misplaced; max/mean load 1.08 | 23.5% of keys moved (ideal 25%), 0 misplaced; max/mean load 1.08 |
+| E5 | How does Raft behave? | commit p50 13.5 / p99 25.2 ms; failover p50 643 ms; 0 of 17842 writes lost | commit p50 1.5 / p99 2.9 ms; failover p50 548 ms; 0 of 155248 writes lost |
+| E6 | How fast does config reach gateways? | config on all gateways p50 4.8 / p99 16.1 ms after commit | config on all gateways p50 1.6 / p99 8.9 ms after commit |
+| E7 | Does the breaker protect latency? | client errors 16.7% → 1.4% with the breaker | client errors 16.5% → 1.3% with the breaker |
 | E8 | Do cost budgets hold? | overspend -0.17% (reserve-and-settle) vs +14.8% (count limit); 0 leaked holds | — |
-| E9 | Does hedging cut tail latency? | TTFT p99 -49% for +0.77% cost (5% hedge budget) | — |
-| E10 | What does the safety filter cost? | 34 MB/s with 10000 patterns; split-pattern recall 100% | — |
-| E11 | Does safe rollout catch bad config? | bad configs rolled back in 1.2–2.7 s; 12/12 decisions correct | — |
-| SIM | Does Raft stay safe under seeded faults? (deterministic simulation) | 5000 seeds × 2 suites pass; planted Raft bugs caught: true | — |
+| E9 | Does hedging cut tail latency? | TTFT p99 -49% for +0.77% cost (5% hedge budget) | TTFT p99 -49% for +0.76% cost (5% hedge budget) |
+| E10 | What does the safety filter cost? | 34 MB/s with 10000 patterns; split-pattern recall 100% | 30 MB/s with 10000 patterns; split-pattern recall 100% |
+| E11 | Does safe rollout catch bad config? | bad configs rolled back in 1.2–2.7 s; 12/12 decisions correct | bad configs rolled back in 1.2–2.2 s; 12/12 decisions correct |
+| SIM | Does Raft stay safe under seeded faults? (deterministic simulation) | 5000 seeds × 2 suites pass; planted Raft bugs caught: true | 5000 seeds × 2 suites pass; planted Raft bugs caught: true |
 
 Full tables, methods and environments: [docs/METRICS.md](docs/METRICS.md).
 
@@ -106,7 +106,7 @@ make down
 
 - **Not deployed to AWS.** The Terraform is written and `terraform validate`d but never applied, so there are no AWS numbers. Benchmarks ran on a laptop and on GitHub-hosted runners. In both, all nodes share one machine, so multi-node *scaling* is not demonstrated.
 - **Missed goals, reported as measured:**
-  - the bytecode VM beats a fair tree-walking interpreter by less than the 3× goal (E2);
+  - the bytecode VM reaches the 3× goal over a fair tree-walking interpreter on the CI runner's x86 CPU but not on the laptop's Apple M2 (E2; see the table);
   - canary exposure was 1/N with equal round robin (goal: under 1/N; the Terraform ALB weights the canary at 5%, untested);
   - a gateway crash mid-stream can overspend a budget by the unsettled partial cost of the cut streams (E8, kill run).
 - **Not implemented:**

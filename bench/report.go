@@ -320,7 +320,7 @@ func writeEnv(b *strings.Builder, r *benchfmt.Result) {
 	rows := [][2]string{
 		{"Run", fmt.Sprintf("%s → %s (UTC)", r.StartedAt.Format("2006-01-02 15:04"), r.FinishedAt.Format("15:04"))},
 		{"Commit", "`" + commit + "`"},
-		{"Machine", fmt.Sprintf("%s, %s, %d CPUs, %.0f GB", e.Machine, e.CPU, e.CPUs, e.MemoryGB)},
+		{"Machine", machine(e)},
 		{"OS / Go / k6", fmt.Sprintf("%s / %s / %s", e.OS, e.GoVersion, orDash(e.K6Version))},
 		{"Topology", fmt.Sprintf("%s; %d gateway node(s) max", e.Topology, e.NodeCount)},
 		{"Load average at start", orDash(e.LoadAvg1m)},
@@ -427,7 +427,7 @@ func writeE1(b *strings.Builder, r *benchfmt.Result) {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_seconds` histogram, whose buckets double in width (…, 25, 50, 100 µs, …), so they are accurate to the bucket, not to the microsecond. Negative added latency means run-to-run noise on the shared laptop exceeded the gateway's cost at that rate.\n\n")
+	b.WriteString("Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_seconds` histogram, whose buckets double in width (…, 25, 50, 100 µs, …), so they are accurate to the bucket, not to the microsecond. Negative added latency means run-to-run noise on the shared machine exceeded the gateway's cost at that rate.\n\n")
 	b.WriteString("**All levels** (median run)\n\n| Target | Rate | p50 (ms) | p99 (ms) | Errors | Achieved req/s | GW CPU (cores) | GW overhead p50 / p99 (µs, from /metrics) | Result |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, t := range s.Targets {
 		for _, l := range t.Levels {
@@ -988,4 +988,14 @@ func writeE11(b *strings.Builder, r *benchfmt.Result) {
 		}
 	}
 	b.WriteString("\nWithout a canary, a pushed config reaches 100% of traffic until a human reverts it; with it, the candidate served the canary's 1/3 share only until the automatic decision.\n\n")
+}
+
+// machine describes the host; memory is omitted when it was not captured
+// (results recorded before Linux memory capture existed).
+func machine(e benchfmt.Env) string {
+	s := fmt.Sprintf("%s, %s, %d CPUs", e.Machine, e.CPU, e.CPUs)
+	if e.MemoryGB > 0 {
+		s += fmt.Sprintf(", %.0f GB", e.MemoryGB)
+	}
+	return s
 }

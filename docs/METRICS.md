@@ -50,7 +50,7 @@ Method: k6 constant-arrival-rate `GET` on a rising rate ladder; a level passes w
 | 15000 | 3 gateways | 0.157 | 1.001 |
 | 20000 | 3 gateways | 8.333 | 973.325 |
 
-Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_seconds` histogram, whose buckets double in width (…, 25, 50, 100 µs, …), so they are accurate to the bucket, not to the microsecond. Negative added latency means run-to-run noise on the shared laptop exceeded the gateway's cost at that rate.
+Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_seconds` histogram, whose buckets double in width (…, 25, 50, 100 µs, …), so they are accurate to the bucket, not to the microsecond. Negative added latency means run-to-run noise on the shared machine exceeded the gateway's cost at that rate.
 
 **All levels** (median run)
 
@@ -407,7 +407,377 @@ Mutation check (bench/sim/mutants.py: five planted Raft bugs, each must be caugh
 
 ## GitHub Actions runner (clean Linux VM)
 
-_No results yet._
+### E1: How fast is the gateway?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 02:29 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V74 80-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 3 gateway node(s) max |
+| Load average at start | 0.82 |
+| Power | — |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: k6 constant-arrival-rate `GET` on a rising rate ladder; a level passes when p99 < 10 ms, errors < 0.1% and the load generator dropped < 1% of iterations. The ladder stops at the first failing level. 3 mock backends with no added latency.
+
+**Max sustained rate**
+
+| Target | Max sustained req/s | Gateway CPU at that rate (cores) | Gateway RSS (MB) |
+| --- | --- | --- | --- |
+| Direct to backends (baseline) | 10000 | — | — |
+| 1 gateway | 7500 | 1.12 | 33 |
+| 3 gateways | 7500 | 1.38 | 93 |
+
+**Latency added vs direct** (median runs at the same rate; includes the extra network hop)
+
+| Rate (req/s) | Target | Added p50 (ms) | Added p99 (ms) |
+| --- | --- | --- | --- |
+| 500 | 1 gateway | 0.161 | 0.560 |
+| 1000 | 1 gateway | 0.146 | 0.464 |
+| 2500 | 1 gateway | 0.142 | 0.520 |
+| 5000 | 1 gateway | 0.132 | 1.444 |
+| 7500 | 1 gateway | 0.207 | 3.386 |
+| 10000 | 1 gateway | 0.309 | 9.020 |
+| 500 | 3 gateways | 0.174 | 0.427 |
+| 1000 | 3 gateways | 0.191 | 0.536 |
+| 2500 | 3 gateways | 0.151 | 0.543 |
+| 5000 | 3 gateways | 0.160 | 1.367 |
+| 7500 | 3 gateways | 0.272 | 6.056 |
+| 10000 | 3 gateways | 0.491 | 22.637 |
+
+Gateway overhead percentiles are estimated from the `tollgate_gateway_overhead_seconds` histogram, whose buckets double in width (…, 25, 50, 100 µs, …), so they are accurate to the bucket, not to the microsecond. Negative added latency means run-to-run noise on the shared machine exceeded the gateway's cost at that rate.
+
+**All levels** (median run)
+
+| Target | Rate | p50 (ms) | p99 (ms) | Errors | Achieved req/s | GW CPU (cores) | GW overhead p50 / p99 (µs, from /metrics) | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| direct | 500 | 0.143 | 0.190 | 0.00% | 500 | — | — | pass |
+| direct | 1000 | 0.136 | 0.221 | 0.00% | 1000 | — | — | pass |
+| direct | 2500 | 0.144 | 0.326 | 0.00% | 2500 | — | — | pass |
+| direct | 5000 | 0.140 | 0.561 | 0.00% | 5000 | — | — | pass |
+| direct | 7500 | 0.119 | 1.266 | 0.00% | 7500 | — | — | pass |
+| direct | 10000 | 0.139 | 5.740 | 0.00% | 10000 | — | — | pass |
+| direct | 15000 | 0.185 | 32.181 | 0.00% | 14803 | — | — | fail: p99 32.18 ms >= limit |
+| gw1 | 500 | 0.304 | 0.749 | 0.00% | 500 | 0.12 | 25 / 50 | pass |
+| gw1 | 1000 | 0.282 | 0.685 | 0.00% | 1000 | 0.22 | 25 / 50 | pass |
+| gw1 | 2500 | 0.286 | 0.846 | 0.00% | 2500 | 0.50 | 25 / 50 | pass |
+| gw1 | 5000 | 0.272 | 2.005 | 0.00% | 5000 | 0.92 | 25 / 50 | pass |
+| gw1 | 7500 | 0.326 | 4.652 | 0.00% | 7500 | 1.12 | 25 / 77 | pass |
+| gw1 | 10000 | 0.449 | 14.760 | 0.00% | 9993 | 1.24 | 26 / 112 | fail: p99 14.76 ms >= limit |
+| gw3 | 500 | 0.317 | 0.616 | 0.00% | 500 | 0.14 | 25 / 50 | pass |
+| gw3 | 1000 | 0.327 | 0.757 | 0.00% | 1000 | 0.27 | 25 / 50 | pass |
+| gw3 | 2500 | 0.295 | 0.869 | 0.00% | 2500 | 0.57 | 25 / 71 | pass |
+| gw3 | 5000 | 0.300 | 1.928 | 0.00% | 5000 | 1.09 | 25 / 50 | pass |
+| gw3 | 7500 | 0.391 | 7.322 | 0.00% | 7500 | 1.38 | 26 / 97 | pass |
+| gw3 | 10000 | 0.631 | 28.377 | 0.00% | 9941 | 1.52 | 26 / 115 | fail: p99 28.38 ms >= limit |
+
+### E2: Does bytecode beat tree-walking?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:21 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V45 96-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | single process (go test); 1 gateway node(s) max |
+| Load average at start | 0.27 |
+| Power | — |
+| Repetitions | 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: `go test ./bench/go -bench E2 -benchmem`; rule sets with xs=2, s=10, m=50, l=200, xl=1000 conditional statements in the evaluated route. Both engines run the same optimized AST; TestE2EnginesAgree and internal/rules TestDifferential must pass first.
+
+Engines agree (differential gate passed): **true**
+
+| Rule set | Statements | Bytecode instrs | VM ns/eval | VM allocs/eval | Interpreter ns/eval | Interpreter allocs/eval | Speedup (interp ÷ VM) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| xs | 2 | 16 | 53.7 | 0 | 62.4 | 0 | 1.16× |
+| s | 10 | 56 | 134.8 | 0 | 304.8 | 0 | 2.26× |
+| m | 50 | 256 | 482.4 | 0 | 1505.0 | 0 | 3.12× |
+| l | 200 | 1004 | 1808.0 | 0 | 5463.0 | 0 | 3.02× |
+| xl | 1000 | 5004 | 8426.0 | 0 | 28325.0 | 0 | 3.36× |
+
+### E3: How accurate is distributed limiting?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:35 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | m8id.xlarge, Intel(R) Xeon(R) 6975P-C, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 3 gateway node(s) max |
+| Load average at start | 0.31 |
+| Power | — |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: one API key, 6000 req/s offered round-robin across the gateways, limit 1000 per second by user.id (token bucket). Ideal admitted = limit × measured seconds (the warm-up drains the initial burst). Batching: batched: max 100 / flush 500us; unbatched: max 1; peer timeout 20ms. Kill run: traffic via gw-1, gw-2 only; gw-3 (the owner) SIGKILLed 20s into the measured window; fallback allows limit/3 per gateway.
+
+**Accuracy and cost** (median run by over-admission)
+
+| Setup | Phase | Admitted | Ideal | Over-admission | p99 (ms) | Added p99 vs 1 gateway (ms) | Peer RPCs / request | Mean batch | Degraded decisions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 gateway (local limit, baseline) | whole window | 60001 | 60000 | +0.00% | 1.95 | — | 0.000 | 0.00 | 0 |
+| 3 gateways, batched | whole window | 60000 | 60000 | +0.00% | 3.46 | +1.51 | 0.254 | 2.62 | 0 |
+| 3 gateways, unbatched | whole window | 60000 | 60000 | +0.00% | 3.18 | +1.23 | 0.666 | 1.00 | 0 |
+| 3 gateways, owner killed | before kill | 20000 | 20000 | +0.00% | 4.12 | +2.17 | 0.089 | 3.76 | 239728 |
+| 3 gateways, owner killed | after owner killed | 27320 | 40000 | -31.70% | 1.86 | — | 0.089 | 3.76 | 239728 |
+
+All runs (over-admission %, whole window or after-kill phase):
+
+- 1 gateway (local limit, baseline): +0.00%, +0.00%, +0.00%
+- 3 gateways, batched: +0.00%, +0.00%, +0.00%
+- 3 gateways, unbatched: +0.00%, +0.00%, +0.00%
+- 3 gateways, owner killed: -31.70%, -31.70%, -31.70%
+
+Degraded decisions and peer RPCs are counted over the measured window on the gateways still running at the end. Negative over-admission means fewer requests were admitted than the limit allows (safe direction); after the owner dies, each surviving gateway enforces limit/3 locally.
+
+### E4: Does consistent hashing minimize movement?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:20 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V74 80-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | single process (pure computation, deterministic); 4 gateway node(s) max |
+| Load average at start | 0.55 |
+| Power | — |
+| Repetitions | 1 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: 1e+06 keys (`<limitID>|user-<n>`), hash FNV-1a 64 + splitmix64 finalizer; add gw-4 to {gw-1..gw-3}; remove gw-4 from {gw-1..gw-4}. Deterministic, so one run is exact.
+
+| vnodes / node | Keys moved, 3→4 nodes | Keys moved, 4→3 nodes | Ideal | Moves not to/from the changed node | Max / mean keys per node (3 nodes) | Min / mean (3 nodes) | Std dev (3 nodes) | Max / mean (4 nodes) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 12.69% | 12.69% | 25% | 0 | 1.536 | 0.672 | 38.2% | 2.048 |
+| 16 | 30.95% | 30.95% | 25% | 0 | 1.178 | 0.742 | 18.7% | 1.238 |
+| 64 | 18.03% | 18.03% | 25% | 0 | 1.093 | 0.856 | 10.3% | 1.160 |
+| 128 | 23.53% | 23.53% | 25% | 0 | 1.083 | 0.954 | 5.9% | 1.125 |
+| 256 | 23.81% | 23.81% | 25% | 0 | 1.042 | 0.966 | 3.2% | 1.044 |
+
+The share of keys that moves equals the share the changed node owns, so it tracks the ideal 1/N only as closely as the ring spreads load; more virtual nodes tighten both.
+
+### E5: How does Raft behave?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:26 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 7763 64-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes: 3 tollgate-control nodes; 3 gateway node(s) max |
+| Load average at start | 0.74 |
+| Power | — |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: 3 nodes, tick 50ms (election timeout 500-1000ms, pre-vote on); WAL with fsync (F_FULLFSYNC on macOS) on every Raft Ready. Commit latency: client-side Put latency, sequential writes, leader stable, measured window after warm-up. Failover: 10 SIGKILLs of the leader per run while a writer keeps writing (retrying every 5ms); 'first write' counts only writes started after the kill; the killed node is restarted between kills. Loss check: every acknowledged write (unique key) read back linearizably at the end of the run.
+
+| Measure | Result |
+| --- | --- |
+| Commit latency p50 / p99 (median run, 36305 writes) | 1.54 ms / 2.90 ms |
+| Leader failover: kill → new leader elected, p50 / max (30 kills) | 545 ms / 941 ms |
+| Leader failover: kill → first write accepted, p50 / max | 548 ms / 946 ms |
+| **Committed entries lost** | **0 of 155248 acknowledged writes** |
+
+Per run (commit p50/p99 ms; failover p50/max ms; lost):
+
+- run 1: 1.55 / 2.99; 535 / 822; 0 lost of 51132
+- run 2: 1.54 / 2.90; 555 / 855; 0 lost of 51984
+- run 3: 1.54 / 2.87; 553 / 946; 0 lost of 52132
+
+### E6: How fast does config reach gateways?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:21 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V45 96-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes: 3 tollgate-control + 3 tollgate-gw (watch streams); 3 gateway node(s) max |
+| Load average at start | 0.22 |
+| Power | — |
+| Repetitions | 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: 100 rule changes through 3 control nodes to 3 gateways; a different rule file each time (deny status varies), compiled by the leader before commit and by each gateway after; from the leader acknowledging the commit (Put returns) until each gateway's /admin/rules reports that version (polled every 1ms).
+
+| Propagation | p50 | p99 |
+| --- | --- | --- |
+| Commit → active on **all** gateways (median run) | 1.61 ms | 8.88 ms |
+| Commit → active on one gateway | 1.57 ms | 8.77 ms |
+
+Per run (all gateways p50 / p99 ms; timeouts):
+
+- run 1: 1.61 / 8.88; 0
+- run 2: 1.60 / 3.14; 0
+- run 3: 1.56 / 110.96; 0
+
+### E7: Does the breaker protect latency?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:31 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V74 80-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 1 gateway node(s) max |
+| Load average at start | 0.76 |
+| Power | — |
+| Measured window × reps | 90s after 10s warm-up × 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: 600 req/s through 1 gateway to 3 backends (2ms + uniform jitter up to 3ms). One backend is switched to 0.5 errors for the failing phase and back. Breaker on vs off, otherwise identical config; passive health checks off in both modes, so only the breaker reacts.
+
+Breaker config (on): `breaker: {window: 5s, min_requests: 20, error_rate: 0.3, cooldown: 2s, half_open_probes: 3}`
+
+**Latency and errors by phase** (median run by failing-phase p99)
+
+| Breaker | Phase | p50 (ms) | p99 (ms) | Error rate |
+| --- | --- | --- | --- | --- |
+| on | before | 4.426 | 6.048 | 0.00% |
+| on | failing | 4.280 | 6.104 | 1.28% |
+| on | recovered | 4.430 | 6.080 | 0.00% |
+| off | before | 4.431 | 6.068 | 0.00% |
+| off | failing | 4.439 | 6.092 | 16.47% |
+| off | recovered | 4.453 | 6.074 | 0.00% |
+
+**Breaker timing** (polled every 10ms)
+
+| | Median run | All runs |
+| --- | --- | --- |
+| Failure → breaker open | 2779 ms | 2779 ms, 2879 ms, 2779 ms |
+| Recovery → breaker closed | 1099 ms | 1030 ms, 1039 ms, 1099 ms |
+| Times opened while failing | 15 | |
+
+### E9: Does hedging cut tail latency?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:35 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V45 96-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes on one machine; k6, gateways and backends share its CPUs; 1 gateway node(s) max |
+| Load average at start | 0.45 |
+| Power | — |
+| Measured window × reps | 60s after 10s warm-up × 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: 40 req/s; providers: 2 x mockllm, TTFT log-normal median 100ms sigma 0.3, 5% of requests x10 (heavy tail), 500 tok/s; request: max_tokens 20, ~10-word prompt, streaming; hedge after the primary's p95 TTFT (rolling 256-sample window, >= 20 samples). Cost: true cost from both providers' billing at $1/1K input, $3/1K output; a cancelled hedge is billed its prompt. TTFT measured by the client to the first content event.
+
+| Hedging | TTFT p50 (ms) | TTFT p95 (ms) | TTFT p99 (ms) | p99 change vs off | Hedge rate | Hedges won | Cost / request | Extra cost vs off |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| off | 104.7 | 753.3 | 1291.2 | +0.0% | 0.00% | — | $0.07320 | +0.00% |
+| after p95, max 1% | 102.0 | 288.9 | 1204.6 | -6.7% | 1.04% | 22 / 25 (88%) | $0.07329 | +0.12% |
+| after p95, max 5% | 102.2 | 255.2 | 655.3 | -49.2% | 4.96% | 103 / 119 (87%) | $0.07376 | +0.76% |
+| after p95, max 10% | 102.2 | 257.6 | 534.6 | -58.6% | 5.50% | 116 / 132 (88%) | $0.07384 | +0.87% |
+
+All runs (TTFT p99 ms):
+
+- off: 1284, 1321, 1291
+- hedge_1pct: 1118, 1205, 1259
+- hedge_5pct: 393, 655, 702
+- hedge_10pct: 386, 535, 543
+
+Median run per mode by p99. Extra cost compares true provider billing per successful request with the hedging-off median run.
+
+### E10: What does the safety filter cost?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:20 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, Intel(R) Xeon(R) 6973P-C, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | single process (filter only); 1 gateway node(s) max |
+| Load average at start | 0.60 |
+| Power | — |
+| Repetitions | 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: a 1.048576e+06-byte corpus streamed in uniform random 1-64 bytes, like SSE token deltas; patterns are two or three random words from a 5,000-word vocabulary (12-30 runes); ~1 pattern occurrence per 2 KB, many straddling chunk boundaries. Holdback delay is derived: holdback runes / 4 chars per token / 50 tokens per second.
+
+| Patterns | Throughput (MB/s) | Per-chunk time p50 / p99 (µs) | Holdback (runes) | Holdback delay at 50 tok/s (ms, derived) | Planted found | Split across chunks found | Recall |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 100 | 33.2 | 1.0 / 1.9 | 28 | 140 | 2254 / 2254 | 1017 / 1017 | 100.00% |
+| 1000 | 26.5 | 1.2 / 2.5 | 27 | 135 | 2130 / 2130 | 879 / 879 | 100.00% |
+| 10000 | 30.0 | 1.1 / 2.6 | 28 | 140 | 2184 / 2184 | 929 / 929 | 100.00% |
+
+Planted and split counts are summed over all runs. Throughput is measured in a separate pass without per-chunk timers.
+
+### E11: Does safe rollout catch bad config?
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:22 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V45 96-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | local processes: 3 tollgate-control + 3 tollgate-gw + 3 mockbackend; 3 gateway node(s) max |
+| Load average at start | 0.35 |
+| Power | — |
+| Repetitions | 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: 3 control nodes, 3 gateways, 300 req/s; window 10s; roll back if canary error rate > baseline + 5 pts or p99 > 1.5x baseline + 5ms; promote after a healthy window; min 100 requests per side. Scenarios: deny_30pct: candidate denies the 30% of requests with b=1; slow_50ms: candidate adds 50ms (X-Mock-Delay); good: harmless change; deny_30pct_leader_killed: control leader SIGKILLed 300ms into the canary, before any verdict is possible. Exposure: requests sent to the canary between rollout commit and decision, over all requests in that interval (round-robin over 3 gateways).
+
+| Scenario | Outcome | Commit → decision | Traffic on the candidate | Bad responses served | Decided by new leader | Canary healthy after |
+| --- | --- | --- | --- | --- | --- | --- |
+| deny_30pct | rolled_back | 1.35 s | 33.3% (135 requests) | 41 | — | true |
+| slow_50ms | rolled_back | 1.19 s | 32.4% (118 requests) | 118 | — | true |
+| good | promoted | 10.64 s | 33.3% (1021 requests) | 0 | — | true |
+| deny_30pct_leader_killed | rolled_back | 2.18 s | 33.3% (220 requests) | 66 | true | true |
+| deny_30pct | rolled_back | 1.40 s | 33.2% (141 requests) | 42 | — | true |
+| slow_50ms | rolled_back | 1.18 s | 32.4% (113 requests) | 113 | — | true |
+| good | promoted | 10.20 s | 33.3% (1021 requests) | 0 | — | true |
+| deny_30pct_leader_killed | rolled_back | 2.18 s | 33.3% (218 requests) | 65 | true | true |
+| deny_30pct | rolled_back | 1.40 s | 33.3% (141 requests) | 42 | — | true |
+| slow_50ms | rolled_back | 1.19 s | 32.7% (117 requests) | 116 | — | true |
+| good | promoted | 10.18 s | 33.4% (1019 requests) | 0 | — | true |
+| deny_30pct_leader_killed | rolled_back | 2.19 s | 33.4% (219 requests) | 66 | true | true |
+
+Reasons recorded in the Raft log:
+
+- deny_30pct: canary error rate 30.0% vs baseline 0.0% (allowed +5.0 pts)
+- slow_50ms: canary p99 51.2ms vs baseline 0.4ms (limit 5.6ms)
+- good: canary within thresholds for 10s (error rate 0.0% vs 0.0%, p99 0.5ms vs 0.6ms)
+- deny_30pct_leader_killed: canary error rate 30.7% vs baseline 0.0% (allowed +5.0 pts)
+
+Without a canary, a pushed config reaches 100% of traffic until a human reverts it; with it, the candidate served the canary's 1/3 share only until the automatic decision.
+
+### SIM: Does Raft stay safe under seeded faults? (deterministic simulation)
+
+| Environment | |
+| --- | --- |
+| Run | 2026-11-16 01:20 → 01:28 (UTC) |
+| Commit | `64faf2bafcf9` |
+| Machine | Virtual Machine, AMD EPYC 9V74 80-Core Processor, 4 CPUs |
+| OS / Go / k6 | linux/amd64 / go1.26.0 / k6 v2.4.0 |
+| Topology | single process (deterministic simulation); 3 gateway node(s) max |
+| Load average at start | 0.67 |
+| Power | — |
+| Repetitions | 3 (median reported) |
+| Note | GitHub Actions hosted runner, run 43785689025 |
+
+Method: TestSeeds (KV machine) and TestSeedsStore (control-plane config store); faults: message drop/delay/duplicate/reorder, one- and two-way partitions, crashes incl. between step and persist; intensity varies per seed; PreVote on even seeds; invariants: election safety, state machine safety (entry and state hash per index), snapshot consistency, liveness after healing.
+
+| Suite | Seeds passed | Elections | Crashes | Partitions | Entries committed | Snapshots | Snapshot installs | Messages dropped |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| KV machine | 5000 | 74339 | 225274 | 33806 | 1735903 | 114580 | 17694 | 6750018 |
+| Config store | 5000 | 74255 | 225875 | 33705 | 1737432 | 115047 | 17586 | 6759229 |
+
+Mutation check (bench/sim/mutants.py: five planted Raft bugs, each must be caught) — all caught: **true**
+
+- vote ignores log up-to-date check: caught -> sim_test.go:23: seed 1 tick 243: state machine safety: node 2 applied (term 5, "") at index 12, another node applied (term 4, "k6=v14")
+- vote and pre-vote ignore log up-to-date check: caught -> sim_test.go:23: seed 1 tick 243: state machine safety: node 2 applied (term 5, "") at index 12, another node applied (term 4, "k6=v14")
+- commit earlier-term entries by count (Figure 8): caught -> sim_test.go:23: seed 1061 tick 726: state machine safety: node 3 applied (term 21, "") at index 46, another node applied (term 14, "k2=v48")
+- no step-down on higher term: caught -> sim_test.go:23: seed 10 tick 2200: liveness: write @305 not applied on every node within 200 ticks after healing: [{ID:1 Term:23 Lead:2 Commit:305 App
+- vote granted twice in a term: caught -> sim_test.go:23: seed 1 tick 22: election safety: nodes 2 and 3 both leader in term 1
 
 ## AWS
 

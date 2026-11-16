@@ -421,6 +421,12 @@ The deterministic simulator covers the replicated store (including `txn`), not t
 - **The ALB weights the canary at 5%.** On AWS the canary gateway sits alone in a target group weighted `canary_weight` (default 5) against the others. That is the fix for E11's 1/N exposure, but it is **untested** because nothing was applied.
 - **First docker-compose run in Docker** (CI runner): it found that all three control nodes crashed with `open /data/wal.log: permission denied`. The distroless images run as uid 65532 and a fresh named volume is root-owned. The image now ships a nonroot-owned `/data`. With that, `deploy/compose-check.sh` passes end to end, including M1's kill-a-backend acceptance (open since M1 because Docker was not installed locally).
 - **No hand-typed numbers in the README.** `bench/report.go` regenerates the README's results table from the result files, alongside METRICS.md.
+- **Runner results differ from the laptop in expected ways** (`bench/results/*-20261116*.json`, run 43785689025):
+  - E2: the VM is **3.36×** the interpreter at 1000 rules (3.12× at 50, 3.02× at 200) on the runner's AMD EPYC, versus 2.56× on the M2. The goal is met on x86 and missed on the laptop; both are reported. Likely cause (unverified): the interpreter's pointer chasing costs relatively more on the server CPU than on the M2's large caches.
+  - E5: commit p50 is **1.5 ms** on Linux versus 13.5 ms on macOS, where the WAL uses `F_FULLFSYNC` (a real flush to the SSD) and Linux `fsync` on the runner's disk is cheaper.
+  - E1: 1 and 3 gateways both sustain **7500 req/s** on a 4-CPU runner (15000 on the laptop). As on the laptop, k6, gateways and backends share one machine, so this does not show scaling.
+  - First pass: E8 failed when a gateway did not become ready in a later repetition and its log had already been deleted. The runner now prints gateway logs on startup failure; E8 was rerun alone.
+  - Memory showed as 0 GB on Linux (only macOS was captured); fixed in `benchfmt`, and the report omits memory for the results recorded before the fix.
 - **Bench workflow trigger.** GitHub only dispatches workflows that exist on the default branch; with the milestone PRs unmerged, editing `bench/ci-run` triggers the run instead.
 
 ## Project-wide tradeoffs (summary)
@@ -428,7 +434,7 @@ The deterministic simulator covers the replicated store (including `txn`), not t
 | Choice | Bought | Cost | Would revisit |
 | --- | --- | --- | --- |
 | Lock-free hot path (atomics, precomputed WRR schedule, per-route metric handles) | ~25 µs in-gateway overhead p50 at 15k req/s (laptop) | approximate breaker windows at bucket boundaries | no |
-| Bytecode VM + verifier, fair interpreter baseline | 2.5×+ on large rule sets, 0 allocs | ~1× on tiny rule sets; missed the 3× goal | superinstructions for more shapes; register VM |
+| Bytecode VM + verifier, fair interpreter baseline | 2.56× (laptop M2) / 3.36× (CI x86) on 1000 rules, 0 allocs | ~1× on tiny rule sets; 3× goal met on x86 only | superinstructions for more shapes; register VM |
 | Rules shipped as source, compiled on each gateway | no bytecode wire format or versioning | every gateway compiles each change (inside the ~5 ms propagation) | only if compile cost grows |
 | Hash-ring limiter with per-peer batching and degraded fallback (limit/N) | +0.07% over-admission with 3 nodes; limits hold when a node dies | fallback buckets start full (small bursts); ~0.5 ms batching delay | adaptive batching (flush on idle) |
 | Reserve the full `max_tokens` estimate | never over budget without crashes | holds ~80–90% above real cost, some affordable requests refused | reserve a percentile of output length, settle the rest |
